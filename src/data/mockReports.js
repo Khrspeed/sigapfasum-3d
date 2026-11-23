@@ -34,9 +34,9 @@ export const FACILITY_CATEGORIES = [
 export const INITIAL_REPORTS = [
   {
     id: "SF-2026-001",
-    title: "Jalan Berlubang Depan Gedung Sate",
+    title: "Jalan Berlubang Kawasan Simpang Tujuh",
     category: "jalan",
-    location: "Jl. Diponegoro No. 22, Bandung",
+    location: "Jl. Simpang Tujuh, Kec. Kota Kudus",
     description:
       "Lubang sedalam 15 cm di lajur kiri membahayakan pengendara motor saat malam hari.",
     status: "Diproses",
@@ -49,7 +49,7 @@ export const INITIAL_REPORTS = [
     id: "SF-2026-002",
     title: "Lampu Penerangan Jalan Mati Total",
     category: "lampu",
-    location: "Jl. Dago Atas, Coblong",
+    location: "Jl. Jenderal Sudirman, Rendeng, Kudus",
     description:
       "Tiga tiang lampu PJU padam sejak 3 hari lalu membuat jalanan gelap gulita.",
     status: "Menunggu",
@@ -62,7 +62,7 @@ export const INITIAL_REPORTS = [
     id: "SF-2026-003",
     title: "Saluran Air Tersumbat Sampah & Endapan",
     category: "drainase",
-    location: "Jl. Buah Batu No. 114",
+    location: "Jl. Sunan Muria, Barongan, Kudus",
     description:
       "Air meluap ke badan jalan setiap kali hujan deras turun lebih dari 30 menit.",
     status: "Selesai",

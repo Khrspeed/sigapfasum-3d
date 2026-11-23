@@ -2,7 +2,7 @@
 
 @layer base {
   body {
-    @apply bg-slate-900 text-slate-800 antialiased selection:bg-blue-600 selection:text-white;
+    @apply bg-slate-50 text-slate-800 antialiased selection:bg-blue-600 selection:text-white;
     font-family:
       "Inter",
       system-ui,
@@ -51,7 +51,10 @@
     box-shadow 0.25s ease;
 }
 .card-3d:hover {
-  transform: translateY(-3px);
+  transform: translateY(-4px);
+  box-shadow:
+    0 18px 32px -8px rgba(15, 23, 42, 0.1),
+    0 6px 14px -3px rgba(15, 23, 42, 0.05);
 }
 
 @keyframes float3d {

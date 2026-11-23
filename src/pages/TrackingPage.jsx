@@ -16,17 +16,18 @@ export default function TrackingPage() {
   );
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-xl font-extrabold text-slate-900">
+    <div className="space-y-6">
+      <div className="max-w-xl">
+        <h2 className="text-xl md:text-2xl font-extrabold text-slate-900">
           Lacak Status Laporan
         </h2>
-        <p className="text-xs text-slate-500">
-          Cari berdasarkan nomor tiket (misal: SF-2026-001) atau lokasi.
+        <p className="text-xs md:text-sm text-slate-500">
+          Cari berdasarkan nomor tiket (misal: SF-2026-001) atau nama jalan di
+          Kudus.
         </p>
       </div>
 
-      <div className="relative">
+      <div className="relative max-w-xl">
         <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
         <input
           type="text"
@@ -37,23 +38,30 @@ export default function TrackingPage() {
         />
       </div>
 
-      <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {filtered.map((item) => (
-          <Card3D key={item.id} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold text-blue-600">
-                {item.id}
-              </span>
-              <span
-                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${getStatusStyle(
-                  item.status,
-                )}`}
-              >
-                {item.status}
-              </span>
+          <Card3D
+            key={item.id}
+            className="space-y-2.5 flex flex-col justify-between"
+          >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-blue-600">
+                  {item.id}
+                </span>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${getStatusStyle(
+                    item.status,
+                  )}`}
+                >
+                  {item.status}
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                {item.title}
+              </h3>
+              <p className="text-xs text-slate-500">{item.description}</p>
             </div>
-            <h3 className="text-sm font-bold text-slate-900">{item.title}</h3>
-            <p className="text-xs text-slate-500">{item.description}</p>
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
               <span className="flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5 text-amber-500" />{" "}
