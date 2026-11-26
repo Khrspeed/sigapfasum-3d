@@ -945,7 +945,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: FORM BUAT LAPORAN + TUTORIAL MENGISI LAPORAN */}
+        {/* VIEW 2: FORM BUAT LAPORAN + KETERANGAN JANGKAUAN GPS */}
         {menu === 'lapor' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <form
@@ -1340,70 +1340,27 @@ export default function App() {
               </button>
             </form>
 
-            {/* Kolom Kanan: Tutorial Mengisi Laporan & Keterangan Jangkauan GPS */}
+            {/* Kolom Kanan: Keterangan Jangkauan GPS */}
             <div className="lg:col-span-4 space-y-5">
               <div className="bento-dark-3d rounded-[28px] p-6 text-white space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-blue-300">
-                    Tutorial Mengisi Laporan
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-amber-300">
+                    Keterangan
                   </span>
-                  <CheckCircle2 className="w-5 h-5 text-blue-400" />
+                  <Info className="w-5 h-5 text-amber-300" />
                 </div>
 
                 {/* Keterangan Khusus Jangkauan GPS */}
-                <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-400/30 flex items-start gap-2.5 text-xs">
+                <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-400/30 flex items-start gap-2.5 text-xs">
                   <Info className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
                   <div>
                     <p className="font-extrabold text-amber-300">
                       Keterangan Jangkauan GPS
                     </p>
-                    <p className="text-[11px] text-white/90 mt-0.5 leading-relaxed">
+                    <p className="text-[11px] text-white/90 mt-1 leading-relaxed">
                       Layanan GPS hanya mendeteksi area di sekitar{' '}
                       <strong>Kabupaten Kudus</strong>. Pastikan GPS perangkat aktif
                       dan Anda berada di wilayah Kudus agar formulir terbuka.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Langkah-langkah Tutorial */}
-                <div className="space-y-2.5 text-xs">
-                  <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-emerald-300">
-                      1. Kunci Titik Lokasi GPS
-                    </p>
-                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Tekan <strong>Verifikasi Lokasi GPS</strong> dan izinkan akses
-                      lokasi browser hingga alamat jalan terisi otomatis.
-                    </p>
-                  </div>
-
-                  <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-blue-300">
-                      2. Pilih Kategori & Tulis Judul
-                    </p>
-                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Pilih kategori fasilitas yang rusak lalu isi judul singkat yang
-                      jelas tanpa mencantumkan tautan atau nomor kontak.
-                    </p>
-                  </div>
-
-                  <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-purple-300">
-                      3. Isi Detail & Wajib Foto Bukti
-                    </p>
-                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Jelaskan kondisi kerusakan minimal 20 karakter dan unggah foto
-                      bukti asli di lapangan (maksimal 3 MB).
-                    </p>
-                  </div>
-
-                  <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-amber-200">
-                      4. Verifikasi Anti-Bot & Pantau Tiket
-                    </p>
-                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Isi hitungan verifikasi, kirim laporan, lalu pantau statusnya di
-                      menu <strong>Lacak Laporan → Laporan Saya</strong>.
                     </p>
                   </div>
                 </div>
