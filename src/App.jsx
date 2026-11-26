@@ -15,6 +15,8 @@ import {
   ArrowUpDown,
   Camera,
   ShieldCheck,
+  ShieldAlert,
+  Lock,
   Send,
   Download,
   X,
@@ -25,22 +27,18 @@ import {
 import {
   INITIAL_CITIZEN_REPORTS,
   KUDUS_CATEGORIES,
-  KUDUS_LOCATIONS,
   OFFICER_DIRECTORY,
   PRIORITY_LEVELS,
   detectAutoPriority,
   getPriorityMeta,
   getReportPriority,
   sortReportsByPriority,
+  validateKudusGeofence,
 } from './data/adminMockData';
 
 const STORAGE_REPORTS_KEY = 'sigapfasum_warga_reports_v3';
 const STORAGE_USER_KEY = 'sigapfasum_warga_user_v3';
-
-// Batas geografis Kabupaten Kudus & sekitarnya agar GPS PC/VPN tidak nyasar ke luar negeri
-function isWithinKudusRegion(lat, lng) {
-  return lat >= -7.15 && lat <= -6.55 && lng >= 110.55 && lng <= 111.15;
-}
+const STORAGE_SUBMISSION_LOG_KEY = 'sigapfasum_submission_log_v1';
 
 export default function App() {
   const [reports, setReports] = useState(() => {
@@ -95,21 +93,21 @@ export default function App() {
   const [sortByPriority, setSortByPriority] = useState(true);
   const [search, setSearch] = useState('');
 
-  // Form Buat Laporan
+  // Form Buat Laporan + Geofence Ketat
   const [formCategory, setFormCategory] = useState(KUDUS_CATEGORIES[0].id);
   const [formTitle, setFormTitle] = useState('');
   const [formPriority, setFormPriority] = useState(KUDUS_CATEGORIES[0].defaultPriority);
   const [isManualPriority, setIsManualPriority] = useState(false);
   const [formLocation, setFormLocation] = useState('');
-  const [formCoords, setFormCoords] = useState(null); // { lat, lng, accuracy, source }
-  const [gpsState, setGpsState] = useState('idle'); // 'idle' | 'scanning' | 'locked' | 'warning'
+  const [formCoords, setFormCoords] = useState(null); // { lat, lng, accuracy, distanceKm }
+  const [gpsState, setGpsState] = useState('idle'); // 'idle' | 'scanning' | 'locked' | 'blocked'
   const [gpsStatusText, setGpsStatusText] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formReporterName, setFormReporterName] = useState('');
   const [formImage, setFormImage] = useState('');
   const [humanVerified, setHumanVerified] = useState(false);
+  const [honeypotTrap, setHoneypotTrap] = useState('');
   const [formNotice, setFormNotice] = useState(null);
-  const [lastSubmittedAt, setLastSubmittedAt] = useState(0);
 
   // Modal Detail & Modal Login Google
   const [detailReport, setDetailReport] = useState(null);
@@ -150,95 +148,101 @@ export default function App() {
     }
   };
 
-  // Helper mengambil posisi dengan promise
   const requestPosition = (options) =>
     new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, options);
     });
 
-  // GPS Hybrid (Mobile + Desktop Anti-Timeout & Validasi Wilayah Kudus)
-  const handleAccurateGps = async () => {
+  // Verifikasi GPS Ketat Tanpa Pengalihan Lokasi Palsu
+  const handleStrictGpsVerification = async () => {
     setFormNotice(null);
+    setFormCoords(null);
 
     if (!navigator.geolocation) {
-      const fallback = KUDUS_LOCATIONS[0];
-      setFormCoords({ lat: fallback.lat, lng: fallback.lng, accuracy: 15, source: 'preset' });
-      if (!formLocation.trim()) setFormLocation(fallback.name);
-      setGpsState('warning');
-      setGpsStatusText('Browser tidak mendukung GPS, diarahkan ke pusat Kabupaten Kudus.');
+      setGpsState('blocked');
+      setGpsStatusText(
+        'Akses Ditolak: Browser Anda tidak mendukung layanan GPS. Pelaporan tidak dapat dilanjutkan.'
+      );
       return;
     }
 
     setGpsState('scanning');
-    setGpsStatusText('Mendeteksi lokasi perangkat Anda...');
+    setGpsStatusText('Memverifikasi koordinat GPS perangkat Anda...');
 
     let position = null;
 
     try {
-      // Tahap 1: Coba GPS akurasi tinggi (cepat di HP outdoor)
       position = await requestPosition({
         enableHighAccuracy: true,
-        timeout: 7000,
-        maximumAge: 10000,
+        timeout: 8000,
+        maximumAge: 0,
       });
     } catch {
       try {
-        // Tahap 2: Fallback ke lokasi jaringan/Wi-Fi (anti-timeout saat di dalam ruangan)
-        setGpsStatusText('Menggunakan jaringan Wi-Fi/seluler untuk mengunci titik...');
+        setGpsStatusText('Mengambil sinyal lokasi jaringan perangkat...');
         position = await requestPosition({
           enableHighAccuracy: false,
-          timeout: 7000,
-          maximumAge: 30000,
+          timeout: 8000,
+          maximumAge: 0,
         });
-      } catch {
-        position = null;
+      } catch (err) {
+        setGpsState('blocked');
+        setFormCoords(null);
+        if (err?.code === 1) {
+          setGpsStatusText(
+            'Akses Ditolak: Izin lokasi GPS diblokir. Aktifkan izin lokasi di browser untuk membuktikan Anda berada di Kabupaten Kudus.'
+          );
+        } else {
+          setGpsStatusText(
+            'Verifikasi Gagal: Sinyal GPS tidak terbaca. Aktifkan GPS perangkat dan coba lagi di area terbuka.'
+          );
+        }
+        return;
       }
-    }
-
-    if (!position) {
-      const fallback = KUDUS_LOCATIONS[0];
-      setFormCoords({ lat: fallback.lat, lng: fallback.lng, accuracy: 20, source: 'preset' });
-      if (!formLocation.trim()) setFormLocation(fallback.name);
-      setGpsState('warning');
-      setGpsStatusText(
-        'Izin GPS belum aktif / sinyal lemah. Titik diarahkan ke Simpang Tujuh Kudus (silakan pilih jalan di bawah jika berbeda).'
-      );
-      return;
     }
 
     const lat = Number(position.coords.latitude.toFixed(6));
     const lng = Number(position.coords.longitude.toFixed(6));
-    const accuracy = Math.round(position.coords.accuracy || 50);
+    const accuracy = Math.round(position.coords.accuracy || 999);
 
-    // Cek apakah lokasi berada di Kabupaten Kudus & sekitarnya (mencegah bug lokasi VPN/PC ke luar negeri)
-    if (!isWithinKudusRegion(lat, lng)) {
-      const fallback = KUDUS_LOCATIONS[0];
-      setFormCoords({ lat: fallback.lat, lng: fallback.lng, accuracy: 20, source: 'preset' });
-      if (!formLocation.trim()) setFormLocation(fallback.name);
-      setGpsState('warning');
-      setGpsStatusText(
-        'Lokasi jaringan PC terdeteksi di luar Kabupaten Kudus. Otomatis disesuaikan ke Pusat Kudus — pilih titik jalan di bawah agar presisi.'
-      );
+    const check = validateKudusGeofence(lat, lng, accuracy);
+
+    if (!check.allowed) {
+      setGpsState('blocked');
+      setFormCoords(null);
+
+      if (check.reason === 'outside_kudus') {
+        setGpsStatusText(
+          `Akses Ditolak: Lokasi Anda terdeteksi ${check.distanceKm} km dari pusat Kabupaten Kudus (di luar jangkauan layanan). Pelaporan hanya dapat dibuat saat berada di wilayah Kabupaten Kudus.`
+        );
+      } else if (check.reason === 'low_accuracy') {
+        setGpsStatusText(
+          `Verifikasi Ditolak: Akurasi lokasi terlalu rendah (±${accuracy} meter / terindikasi VPN/IP). Aktifkan GPS Akurat pada perangkat Anda.`
+        );
+      } else {
+        setGpsStatusText('Koordinat lokasi tidak valid. Pelaporan diblokir.');
+      }
       return;
     }
 
-    setFormCoords({ lat, lng, accuracy, source: 'gps' });
+    // Lolos verifikasi Geofence Kabupaten Kudus
+    setFormCoords({
+      lat,
+      lng,
+      accuracy,
+      distanceKm: check.distanceKm,
+    });
     setGpsState('locked');
-    setGpsStatusText(`Lokasi GPS terkunci (akurasi ±${accuracy} meter)`);
+    setGpsStatusText(
+      `Terverifikasi di wilayah Kabupaten Kudus (akurasi ±${accuracy} meter)`
+    );
 
     const resolvedAddress = await resolveAddressFromCoords(lat, lng);
     if (resolvedAddress) {
       setFormLocation(resolvedAddress);
     } else if (!formLocation.trim()) {
-      setFormLocation(`Titik GPS (${lat}, ${lng}), Kabupaten Kudus`);
+      setFormLocation(`Titik Terverifikasi (${lat}, ${lng}), Kabupaten Kudus`);
     }
-  };
-
-  const handleSelectPresetLocation = (locObj) => {
-    setFormLocation(locObj.name);
-    setFormCoords({ lat: locObj.lat, lng: locObj.lng, accuracy: 15, source: 'preset' });
-    setGpsState('locked');
-    setGpsStatusText('Titik lokasi Kabupaten Kudus dipilih');
   };
 
   const navTabs = [
@@ -287,18 +291,39 @@ export default function App() {
     e.preventDefault();
     setFormNotice(null);
 
-    if (!formTitle.trim() || !formLocation.trim() || !formDescription.trim()) {
+    // 1. Cek Honeypot Anti-Bot
+    if (honeypotTrap.trim() !== '') {
+      return;
+    }
+
+    // 2. Validasi Ulang Geofence Kabupaten Kudus (Anti-Bypass)
+    if (!formCoords || gpsState !== 'locked') {
       setFormNotice({
         type: 'error',
-        text: 'Judul kerusakan, lokasi kejadian, dan deskripsi wajib diisi.',
+        text: 'Pelaporan diblokir: Wajib verifikasi GPS yang berada di dalam wilayah Kabupaten Kudus.',
       });
       return;
     }
 
-    if (!formCoords) {
+    const strictCheck = validateKudusGeofence(
+      formCoords.lat,
+      formCoords.lng,
+      formCoords.accuracy
+    );
+    if (!strictCheck.allowed) {
+      setGpsState('blocked');
+      setFormCoords(null);
       setFormNotice({
         type: 'error',
-        text: 'Wajib mengunci lokasi GPS atau memilih titik lokasi Kabupaten Kudus.',
+        text: 'Akses Ditolak: Koordinat berada di luar jangkauan wilayah Kabupaten Kudus.',
+      });
+      return;
+    }
+
+    if (!formTitle.trim() || !formLocation.trim() || !formDescription.trim()) {
+      setFormNotice({
+        type: 'error',
+        text: 'Judul kerusakan, detail alamat/patokan, dan deskripsi wajib diisi.',
       });
       return;
     }
@@ -306,15 +331,34 @@ export default function App() {
     if (!humanVerified) {
       setFormNotice({
         type: 'error',
-        text: 'Centang konfirmasi laporan valid terlebih dahulu.',
+        text: 'Centang pernyataan pertanggungjawaban laporan terlebih dahulu.',
       });
       return;
     }
 
-    if (Date.now() - lastSubmittedAt < 10000) {
+    // 3. Cek Rate Limiting (Jeda 30 detik & Maksimal 5 laporan / 24 jam)
+    const now = Date.now();
+    let history = [];
+    try {
+      const raw = localStorage.getItem(STORAGE_SUBMISSION_LOG_KEY);
+      history = raw ? JSON.parse(raw) : [];
+    } catch {
+      history = [];
+    }
+
+    const last24h = history.filter((ts) => now - ts < 24 * 60 * 60 * 1000);
+    if (last24h.length > 0 && now - last24h[last24h.length - 1] < 30000) {
       setFormNotice({
         type: 'error',
-        text: 'Mohon tunggu beberapa detik sebelum mengirim laporan berikutnya.',
+        text: 'Terlalu cepat: Tunggu 30 detik sebelum mengirim laporan berikutnya.',
+      });
+      return;
+    }
+
+    if (last24h.length >= 5) {
+      setFormNotice({
+        type: 'error',
+        text: 'Batas keamanan tercapai: Maksimal 5 laporan per 24 jam dari perangkat ini.',
       });
       return;
     }
@@ -342,7 +386,15 @@ export default function App() {
     };
 
     setReports((prev) => [newReport, ...prev]);
-    setLastSubmittedAt(Date.now());
+
+    try {
+      localStorage.setItem(
+        STORAGE_SUBMISSION_LOG_KEY,
+        JSON.stringify([...last24h, now])
+      );
+    } catch {
+      // Abaikan error storage
+    }
 
     setFormTitle('');
     setFormDescription('');
@@ -352,7 +404,7 @@ export default function App() {
 
     setFormNotice({
       type: 'success',
-      text: `Laporan terkirim dengan Nomor Tiket ${ticketId} (Prioritas ${formPriority})!`,
+      text: `Laporan terverifikasi terkirim dengan Nomor Tiket ${ticketId} (Prioritas ${formPriority})!`,
     });
     setDetailReport(newReport);
   };
@@ -410,6 +462,8 @@ export default function App() {
     ? sortReportsByPriority(baseFilteredReports)
     : baseFilteredReports;
 
+  const isSubmitUnlocked = Boolean(formCoords && gpsState === 'locked');
+
   const renderPriorityBadge = (report) => {
     const prio = getReportPriority(report);
     const meta = getPriorityMeta(prio);
@@ -458,7 +512,7 @@ export default function App() {
 
   return (
     <div className={`min-h-screen overflow-x-hidden transition-colors duration-300 pb-28 ${pageBg}`}>
-      {/* TOP HEADER SOLID-BLUR (ANTI TUMPANG TINDIH SAAT SCROLL) */}
+      {/* TOP HEADER SOLID-BLUR */}
       <header
         className={`sticky top-0 z-40 py-3 px-4 sm:px-8 border-b backdrop-blur-xl transition-colors ${
           darkMode
@@ -556,15 +610,15 @@ export default function App() {
                 <div className="absolute -right-10 -bottom-10 w-44 h-44 rounded-full bg-white/10 blur-xl" />
                 <div className="space-y-2.5 relative">
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-[11px] font-bold">
-                    <MapPin className="w-3.5 h-3.5" /> Layanan Warga Kabupaten Kudus
+                    <ShieldCheck className="w-3.5 h-3.5" /> Geofence Aktif • Khusus Wilayah Kudus
                   </span>
                   <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-snug">
                     {citizenUser
                       ? `Halo, ${citizenUser.name}! Ada Fasilitas Rusak di Sekitar Anda?`
-                      : 'Laporkan Kerusakan Fasilitas Umum dengan Cepat & Akurat'}
+                      : 'Laporkan Kerusakan Fasilitas Umum dengan Cepat & Terverifikasi'}
                   </h1>
                   <p className="text-xs sm:text-sm text-blue-100 max-w-xl leading-relaxed">
-                    Kirim foto bukti, titik GPS otomatis, dan tingkat prioritas penanganan agar tim lapangan segera menindaklanjuti.
+                    Sistem memverifikasi lokasi GPS Anda secara langsung di area Kabupaten Kudus untuk mencegah laporan palsu.
                   </p>
                 </div>
 
@@ -737,20 +791,50 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: FORM BUAT LAPORAN + GPS HYBRID AKURAT */}
+        {/* VIEW 2: FORM BUAT LAPORAN DENGAN GEOFENCE KETAT */}
         {menu === 'lapor' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <form
               onSubmit={handleSubmitReport}
               className={`lg:col-span-8 rounded-[28px] border p-5 sm:p-7 space-y-5 ${cardBg}`}
             >
-              <div>
-                <h2 className="text-lg font-extrabold">
-                  Buat Laporan Fasilitas Umum
-                </h2>
-                <p className={`text-xs mt-0.5 ${mutedText}`}>
-                  Kunci lokasi GPS atau pilih titik jalan di Kabupaten Kudus agar petugas tepat sasaran.
-                </p>
+              {/* Honeypot tersembunyi untuk anti-bot */}
+              <input
+                type="text"
+                tabIndex={-1}
+                autoComplete="off"
+                value={honeypotTrap}
+                onChange={(e) => setHoneypotTrap(e.target.value)}
+                className="hidden"
+                aria-hidden="true"
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-lg font-extrabold">
+                    Buat Laporan Fasilitas Umum
+                  </h2>
+                  <p className={`text-xs mt-0.5 ${mutedText}`}>
+                    Wajib verifikasi lokasi GPS langsung di dalam wilayah Kabupaten Kudus.
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-extrabold ${
+                    isSubmitUnlocked
+                      ? 'bg-emerald-500/15 text-emerald-600'
+                      : 'bg-amber-500/15 text-amber-600'
+                  }`}
+                >
+                  {isSubmitUnlocked ? (
+                    <>
+                      <ShieldCheck className="w-3.5 h-3.5" /> Wilayah Kudus Terverifikasi
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-3.5 h-3.5" /> Menunggu Kunci GPS Kudus
+                    </>
+                  )}
+                </span>
               </div>
 
               {formNotice && (
@@ -765,10 +849,117 @@ export default function App() {
                 </div>
               )}
 
-              {/* 1. Kategori */}
+              {/* 1. Verifikasi Lokasi GPS Geofence (Ditempatkan di urutan 1 agar langsung dicek) */}
+              <div
+                className={`p-4 rounded-2xl border space-y-3 ${
+                  gpsState === 'blocked'
+                    ? 'bg-red-500/5 border-red-500/40'
+                    : gpsState === 'locked'
+                    ? 'bg-emerald-500/5 border-emerald-500/40'
+                    : subCardBg
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-extrabold">
+                      1. Verifikasi Lokasi GPS (Geofence Kabupaten Kudus)
+                    </label>
+                    <p className={`text-[11px] mt-0.5 ${mutedText}`}>
+                      Laporan ditolak otomatis jika posisi di luar Kudus atau GPS nonaktif.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleStrictGpsVerification}
+                    disabled={gpsState === 'scanning'}
+                    className="px-4 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-70 text-white text-xs font-extrabold inline-flex items-center gap-1.5 transition cursor-pointer self-start shrink-0"
+                  >
+                    {gpsState === 'scanning' ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Memverifikasi...
+                      </>
+                    ) : (
+                      <>
+                        <Crosshair className="w-3.5 h-3.5" />
+                        {formCoords ? 'Verifikasi Ulang GPS' : 'Verifikasi Lokasi GPS'}
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {gpsStatusText && (
+                  <div
+                    className={`p-3 rounded-xl text-[11px] font-bold flex items-start gap-2 leading-relaxed ${
+                      gpsState === 'blocked'
+                        ? 'bg-red-500/15 text-red-600'
+                        : gpsState === 'scanning'
+                        ? 'bg-blue-600/10 text-blue-600'
+                        : 'bg-emerald-500/15 text-emerald-600'
+                    }`}
+                  >
+                    {gpsState === 'blocked' ? (
+                      <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                    ) : (
+                      <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
+                    )}
+                    <span>{gpsStatusText}</span>
+                  </div>
+                )}
+
+                <input
+                  type="text"
+                  required
+                  disabled={!isSubmitUnlocked}
+                  placeholder={
+                    isSubmitUnlocked
+                      ? 'Detail alamat / patokan lokasi di Kudus...'
+                      : 'Kunci lokasi GPS di Kabupaten Kudus terlebih dahulu...'
+                  }
+                  value={formLocation}
+                  onChange={(e) => setFormLocation(e.target.value)}
+                  className={`w-full px-4 py-3 rounded-2xl border text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:opacity-60 ${subCardBg}`}
+                />
+
+                {/* Pratinjau Peta Pin & Koordinat Terverifikasi */}
+                {formCoords && gpsState === 'locked' && (
+                  <div className={`rounded-2xl border overflow-hidden ${subCardBg}`}>
+                    <div className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs border-b border-slate-200/60 dark:border-slate-700/60">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-emerald-600">
+                          ✓ {formCoords.lat}, {formCoords.lng}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-600">
+                          ±{formCoords.accuracy} m • {formCoords.distanceKm} km dr Pusat Kudus
+                        </span>
+                      </div>
+                      <a
+                        href={`https://www.google.com/maps?q=${formCoords.lat},${formCoords.lng}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 font-extrabold hover:underline inline-flex items-center gap-1"
+                      >
+                        Google Maps <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                    <iframe
+                      title="Peta Lokasi GPS Terverifikasi"
+                      className="w-full h-40 border-0"
+                      loading="lazy"
+                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${
+                        formCoords.lng - 0.003
+                      }%2C${formCoords.lat - 0.002}%2C${formCoords.lng + 0.003}%2C${
+                        formCoords.lat + 0.002
+                      }&layer=mapnik&marker=${formCoords.lat}%2C${formCoords.lng}`}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Kategori */}
               <div className="space-y-2">
                 <label className="block text-xs font-extrabold">
-                  1. Kategori Fasilitas
+                  2. Kategori Fasilitas
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {KUDUS_CATEGORIES.map((cat) => {
@@ -791,10 +982,10 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 2. Judul */}
+              {/* 3. Judul */}
               <div className="space-y-1.5">
                 <label className="block text-xs font-extrabold">
-                  2. Judul Laporan
+                  3. Judul Laporan
                 </label>
                 <input
                   type="text"
@@ -806,11 +997,11 @@ export default function App() {
                 />
               </div>
 
-              {/* 3. Tingkat Prioritas */}
+              {/* 4. Tingkat Prioritas */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <label className="block text-xs font-extrabold">
-                    3. Tingkat Prioritas
+                    4. Tingkat Prioritas
                   </label>
                   <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600">
                     <Sparkles className="w-3 h-3" />
@@ -853,116 +1044,6 @@ export default function App() {
                     );
                   })}
                 </div>
-              </div>
-
-              {/* 4. GPS Hybrid Akurat + Peta Pin */}
-              <div className="space-y-2.5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <label className="block text-xs font-extrabold">
-                    4. Lokasi Kejadian & Kunci GPS Akurat
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleAccurateGps}
-                    disabled={gpsState === 'scanning'}
-                    className="px-4 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-70 text-white text-xs font-extrabold inline-flex items-center gap-1.5 transition cursor-pointer self-start"
-                  >
-                    {gpsState === 'scanning' ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Mendeteksi Lokasi...
-                      </>
-                    ) : (
-                      <>
-                        <Crosshair className="w-3.5 h-3.5" />
-                        {formCoords ? 'Deteksi Ulang GPS' : 'Deteksi Lokasi GPS'}
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {gpsStatusText && (
-                  <p
-                    className={`text-[11px] font-bold leading-relaxed ${
-                      gpsState === 'warning'
-                        ? 'text-amber-600'
-                        : gpsState === 'scanning'
-                        ? 'text-blue-600'
-                        : 'text-emerald-600'
-                    }`}
-                  >
-                    {gpsStatusText}
-                  </p>
-                )}
-
-                <input
-                  type="text"
-                  required
-                  placeholder="Alamat otomatis terisi dari GPS atau ketik patokan lokasi..."
-                  value={formLocation}
-                  onChange={(e) => setFormLocation(e.target.value)}
-                  className={`w-full px-4 py-3 rounded-2xl border text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 ${subCardBg}`}
-                />
-
-                {/* Pilihan Cepat Titik Kudus */}
-                <div className="flex flex-wrap gap-1.5">
-                  {KUDUS_LOCATIONS.map((loc) => (
-                    <button
-                      key={loc.name}
-                      type="button"
-                      onClick={() => handleSelectPresetLocation(loc)}
-                      className={`px-3 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer ${
-                        formLocation === loc.name
-                          ? 'bg-blue-600/15 border-blue-600 text-blue-600'
-                          : `${subCardBg} ${mutedText}`
-                      }`}
-                    >
-                      📍 {loc.name.split(',')[0]}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Pratinjau Peta Pin & Koordinat */}
-                {formCoords && (
-                  <div className={`rounded-2xl border overflow-hidden ${subCardBg}`}>
-                    <div className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs border-b border-slate-200/60 dark:border-slate-700/60">
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-emerald-600">
-                          ✓ {formCoords.lat}, {formCoords.lng}
-                        </span>
-                        {formCoords.accuracy && (
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                              formCoords.accuracy <= 50
-                                ? 'bg-emerald-500/15 text-emerald-600'
-                                : 'bg-amber-500/15 text-amber-600'
-                            }`}
-                          >
-                            ±{formCoords.accuracy} m
-                          </span>
-                        )}
-                      </div>
-                      <a
-                        href={`https://www.google.com/maps?q=${formCoords.lat},${formCoords.lng}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 font-extrabold hover:underline inline-flex items-center gap-1"
-                      >
-                        Google Maps <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                    <iframe
-                      title="Peta Lokasi GPS"
-                      className="w-full h-40 border-0"
-                      loading="lazy"
-                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${
-                        formCoords.lng - 0.003
-                      }%2C${formCoords.lat - 0.002}%2C${formCoords.lng + 0.003}%2C${
-                        formCoords.lat + 0.002
-                      }&layer=mapnik&marker=${formCoords.lat}%2C${formCoords.lng}`}
-                    />
-                  </div>
-                )}
               </div>
 
               {/* 5. Deskripsi & Foto */}
@@ -1043,45 +1124,64 @@ export default function App() {
                     className="w-4 h-4 accent-blue-600 rounded"
                   />
                   <span className="text-xs font-bold">
-                    Saya memastikan laporan ini valid
+                    Saya bertanggung jawab atas keaslian laporan ini
                   </span>
                 </label>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3.5 rounded-full bento-blue-3d text-white text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer"
+                disabled={!isSubmitUnlocked}
+                className={`w-full py-3.5 rounded-full text-xs font-extrabold flex items-center justify-center gap-2 transition ${
+                  isSubmitUnlocked
+                    ? 'bento-blue-3d text-white cursor-pointer'
+                    : 'bg-slate-300 dark:bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
               >
-                <Send className="w-4 h-4" /> Kirim Laporan Sekarang
+                {isSubmitUnlocked ? (
+                  <>
+                    <Send className="w-4 h-4" /> Kirim Laporan Terverifikasi
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-4 h-4" /> Verifikasi GPS Wilayah Kudus untuk Mengirim
+                  </>
+                )}
               </button>
             </form>
 
-            {/* Kolom Kanan: Panduan Singkat */}
+            {/* Kolom Kanan: Kebijakan Keamanan & Anti-Laporan Palsu */}
             <div className="lg:col-span-4 space-y-5">
               <div className="bento-dark-3d rounded-[28px] p-6 text-white space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-extrabold uppercase tracking-wider text-blue-300">
-                    Tips Akurasi GPS & Prioritas
+                    Keamanan Anti-Laporan Palsu
                   </span>
                   <ShieldCheck className="w-5 h-5 text-blue-400" />
                 </div>
                 <div className="space-y-3 text-xs">
                   <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-blue-300">📍 Kunci Lokasi Presisi</p>
+                    <p className="font-extrabold text-emerald-300">
+                      🛡️ Geofencing Kabupaten Kudus
+                    </p>
                     <p className="text-[11px] text-white/80 mt-0.5">
-                      Tekan tombol GPS saat berada di dekat lokasi kerusakan atau pilih titik jalan Kudus yang tersedia.
+                      Hanya perangkat yang terdeteksi berada di 9 kecamatan Kabupaten Kudus yang dapat mengirim aduan.
                     </p>
                   </div>
                   <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-red-300">● Prioritas Tinggi</p>
+                    <p className="font-extrabold text-amber-300">
+                      🚫 Tanpa Pengalihan Lokasi
+                    </p>
                     <p className="text-[11px] text-white/80 mt-0.5">
-                      Pohon tumbang menutup jalan, jalan berlubang dalam, atau jembatan rusak.
+                      Pengguna di luar Kudus atau yang mematikan GPS/menggunakan VPN otomatis diblokir sistem.
                     </p>
                   </div>
                   <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-amber-300">● Prioritas Sedang & Rendah</p>
+                    <p className="font-extrabold text-blue-300">
+                      ⏱️ Batas Kirim Anti-Spam
+                    </p>
                     <p className="text-[11px] text-white/80 mt-0.5">
-                      Lampu PJU mati, drainase tersumbat, atau trotoar rusak ringan.
+                      Dibatasi jeda 30 detik antar laporan dan maksimal 5 aduan per 24 jam per perangkat.
                     </p>
                   </div>
                 </div>
@@ -1095,7 +1195,6 @@ export default function App() {
           <div className={`rounded-[28px] border p-5 sm:p-6 space-y-5 ${cardBg}`}>
             <div className="flex flex-col gap-3">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                {/* Filter Status + Laporan Saya */}
                 <div className="flex flex-wrap gap-1.5">
                   {[
                     { id: 'semua', label: 'Semua' },
@@ -1142,7 +1241,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Filter Prioritas & Urutan */}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className={`text-[11px] font-bold mr-1 ${mutedText}`}>
@@ -1381,7 +1479,7 @@ export default function App() {
         )}
       </main>
 
-      {/* FLOATING BOTTOM DOCK (1 BARIS RAPI DI HP & DESKTOP) */}
+      {/* FLOATING BOTTOM DOCK */}
       <nav
         aria-label="Navigasi Utama"
         className={`fixed bottom-4 left-1/2 -translate-x-1/2 w-[calc(100%-1.5rem)] max-w-md rounded-full border p-1.5 flex items-center justify-between gap-1 z-40 backdrop-blur-xl shadow-2xl transition-colors ${

@@ -36,33 +36,62 @@ export const KUDUS_CATEGORIES = [
   },
 ];
 
-export const KUDUS_LOCATIONS = [
-  {
-    name: 'Jl. Simpang Tujuh, Kec. Kota Kudus',
-    lat: -6.8048,
-    lng: 110.8405,
-  },
-  {
-    name: 'Jl. Jenderal Sudirman, Rendeng, Kudus',
-    lat: -6.8095,
-    lng: 110.8482,
-  },
-  {
-    name: 'Jl. Sunan Muria, Barongan, Kudus',
-    lat: -6.7985,
-    lng: 110.842,
-  },
-  {
-    name: 'Taman Krida Wisata, Wergu Wetan, Kudus',
-    lat: -6.815,
-    lng: 110.849,
-  },
-  {
-    name: 'Jl. Kudus - Jepara, Kaliwungu, Kudus',
-    lat: -6.7921,
-    lng: 110.8054,
-  },
-];
+// Titik pusat Kabupaten Kudus (Simpang Tujuh) & Geofence 9 Kecamatan
+export const KUDUS_CENTER = {
+  lat: -6.8048,
+  lng: 110.8405,
+};
+
+function calculateDistanceKm(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Number((R * c).toFixed(1));
+}
+
+export function validateKudusGeofence(lat, lng, accuracy = 0) {
+  if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng)) {
+    return { allowed: false, reason: 'invalid_coords', distanceKm: null };
+  }
+
+  const distanceKm = calculateDistanceKm(lat, lng, KUDUS_CENTER.lat, KUDUS_CENTER.lng);
+
+  // Cek apakah koordinat berada di dalam batas wilayah Kabupaten Kudus
+  const inBoundingBox =
+    lat >= -6.97 && lat <= -6.62 && lng >= 110.72 && lng <= 111.0;
+  const inRadius = distanceKm <= 23;
+
+  if (!inBoundingBox || !inRadius) {
+    return {
+      allowed: false,
+      reason: 'outside_kudus',
+      distanceKm,
+    };
+  }
+
+  // Tolak lokasi berbasis IP kasar / VPN dengan radius error > 1.500 meter
+  if (accuracy > 1500) {
+    return {
+      allowed: false,
+      reason: 'low_accuracy',
+      distanceKm,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: 'ok',
+    distanceKm,
+  };
+}
 
 export const OFFICER_DIRECTORY = {
   petugas1: 'Budi Santoso (Tim Jalan & Jembatan)',
