@@ -17,7 +17,6 @@ import { FACILITY_CATEGORIES } from '../data/mockReports';
 import Card3D from '../components/ui/Card3D';
 import Button3D from '../components/ui/Button3D';
 
-// Fungsi kompresi foto agar ringan & aman disimpan di browser / dikirim ke API
 function compressImageFile(file, maxWidth = 800, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -60,6 +59,9 @@ export default function ReportFormPage({ onSuccess }) {
   const [locLoading, setLocLoading] = useState(false);
   const [locError, setLocError] = useState('');
   const [createdTicket, setCreatedTicket] = useState(null);
+
+  // [ANTI-BOT 1] State jebakan Honeypot (kosong jika manusia, terisi jika bot)
+  const [botTrap, setBotTrap] = useState('');
 
   const handlePhotoChange = async (e) => {
     const file = e.target.files?.[0];
@@ -128,6 +130,19 @@ export default function ReportFormPage({ onSuccess }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    // [ANTI-BOT 2A] Cek jebakan Honeypot: jika terisi, hentikan proses diam-diam
+    if (botTrap) return;
+
+    // [ANTI-BOT 2B] Cek jeda anti-spam 60 detik antar laporan
+    const lastSubmit = Number(localStorage.getItem('sigapfasum_last_submit') || 0);
+    const now = Date.now();
+    if (now - lastSubmit < 60000) {
+      const sisaDetik = Math.ceil((60000 - (now - lastSubmit)) / 1000);
+      alert(`Mohon tunggu ${sisaDetik} detik sebelum mengirim laporan berikutnya.`);
+      return;
+    }
+
     if (!title || !coords || !photoPreview) return;
 
     const finalLocation = locationDetail.trim() || detectedAddress || `${coords.lat}, ${coords.lng}`;
@@ -143,6 +158,9 @@ export default function ReportFormPage({ onSuccess }) {
       image: photoPreview,
       reporter: user ? user.name : 'Warga Kudus',
     });
+
+    // Simpan waktu pengiriman terakhir untuk filter anti-spam
+    localStorage.setItem('sigapfasum_last_submit', String(now));
     setCreatedTicket(result);
   };
 
@@ -188,6 +206,18 @@ export default function ReportFormPage({ onSuccess }) {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* [ANTI-BOT 3] Kolom jebakan tersembunyi (tidak terlihat pengguna, diisi otomatis oleh bot) */}
+        <input
+          type="text"
+          name="website_url"
+          tabIndex="-1"
+          autoComplete="off"
+          value={botTrap}
+          onChange={(e) => setBotTrap(e.target.value)}
+          className="hidden"
+          aria-hidden="true"
+        />
+
         <Card3D className="p-5 md:p-6 space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">Judul Kerusakan</label>
@@ -312,7 +342,6 @@ export default function ReportFormPage({ onSuccess }) {
               Foto Bukti Kerusakan (Wajib)
             </label>
 
-            {/* Input tersembunyi untuk Kamera Langsung & Galeri */}
             <input
               ref={cameraInputRef}
               type="file"
