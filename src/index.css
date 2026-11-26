@@ -2,13 +2,45 @@
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-800 antialiased selection:bg-blue-600 selection:text-white;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 }
 
-.card-3d {
-  background: #ffffff;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.05), 0 4px 10px -2px rgba(15, 23, 42, 0.02);
+.bento-3d {
+  box-shadow:
+    0 12px 30px -10px rgba(15, 23, 42, 0.08),
+    0 4px 10px -4px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease;
+}
+
+.bento-3d:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 18px 36px -12px rgba(37, 99, 235, 0.14),
+    0 6px 14px -4px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 0 rgba(255, 255, 255, 1);
+}
+
+.bento-blue-3d {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 55%, #1e40af 100%);
+  box-shadow:
+    0 14px 28px -8px rgba(37, 99, 235, 0.45),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease;
+}
+
+.bento-blue-3d:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 18px 34px -8px rgba(37, 99, 235, 0.55),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.bento-dark-3d {
+  background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
+  box-shadow:
+    0 16px 32px -10px rgba(15, 23, 42, 0.45),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.14);
 }
