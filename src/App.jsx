@@ -33,13 +33,62 @@ import {
   detectAutoPriority,
   getPriorityMeta,
   getReportPriority,
+  sanitizeText,
   sortReportsByPriority,
   validateKudusGeofence,
+  validateReportContent,
 } from './data/adminMockData';
 
 const STORAGE_REPORTS_KEY = 'sigapfasum_warga_reports_v3';
 const STORAGE_USER_KEY = 'sigapfasum_warga_user_v3';
 const STORAGE_SUBMISSION_LOG_KEY = 'sigapfasum_submission_log_v1';
+const STORAGE_MY_TICKETS_KEY = 'sigapfasum_my_tickets_v1';
+
+function createMathChallenge() {
+  const a = Math.floor(Math.random() * 8) + 2; // 2..9
+  const b = Math.floor(Math.random() * 8) + 1; // 1..8
+  return { a, b, answer: a + b };
+}
+
+// Re-encode & kompres foto via Canvas untuk membersihkan metadata EXIF & membatasi ukuran
+function sanitizeAndCompressImage(file) {
+  return new Promise((resolve, reject) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      reject(new Error('Format foto harus JPG, PNG, atau WEBP.'));
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      reject(new Error('Ukuran foto maksimal 3 MB.'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxWidth = 1080;
+        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Gagal memproses gambar di browser.'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const cleanedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        resolve(cleanedDataUrl);
+      };
+      img.onerror = () => reject(new Error('File gambar rusak atau tidak valid.'));
+      img.src = String(ev.target?.result || '');
+    };
+    reader.onerror = () => reject(new Error('Gagal membaca file foto.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function App() {
   const [reports, setReports] = useState(() => {
@@ -53,6 +102,15 @@ export default function App() {
       // Abaikan error storage
     }
     return INITIAL_CITIZEN_REPORTS;
+  });
+
+  const [myTicketIds, setMyTicketIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_MY_TICKETS_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   const [citizenUser, setCitizenUser] = useState(() => {
@@ -71,6 +129,14 @@ export default function App() {
       // Abaikan kuota penuh
     }
   }, [reports]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_MY_TICKETS_KEY, JSON.stringify(myTicketIds));
+    } catch {
+      // Abaikan error storage
+    }
+  }, [myTicketIds]);
 
   useEffect(() => {
     try {
@@ -94,20 +160,24 @@ export default function App() {
   const [sortByPriority, setSortByPriority] = useState(true);
   const [search, setSearch] = useState('');
 
-  // Form Buat Laporan + Geofence Ketat
+  // Form Buat Laporan + Geofence + Anti-Bot
   const [formCategory, setFormCategory] = useState(KUDUS_CATEGORIES[0].id);
   const [formTitle, setFormTitle] = useState('');
   const [formPriority, setFormPriority] = useState(KUDUS_CATEGORIES[0].defaultPriority);
   const [isManualPriority, setIsManualPriority] = useState(false);
   const [formLocation, setFormLocation] = useState('');
-  const [formCoords, setFormCoords] = useState(null); // { lat, lng, accuracy, distanceKm }
-  const [gpsState, setGpsState] = useState('idle'); // 'idle' | 'scanning' | 'locked' | 'blocked'
+  const [formCoords, setFormCoords] = useState(null);
+  const [gpsState, setGpsState] = useState('idle');
   const [gpsStatusText, setGpsStatusText] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formReporterName, setFormReporterName] = useState('');
   const [formImage, setFormImage] = useState('');
+  const [imageStatusText, setImageStatusText] = useState('');
   const [humanVerified, setHumanVerified] = useState(false);
   const [honeypotTrap, setHoneypotTrap] = useState('');
+  const [mathChallenge, setMathChallenge] = useState(() => createMathChallenge());
+  const [mathInput, setMathInput] = useState('');
+  const [formOpenedAt, setFormOpenedAt] = useState(() => Date.now());
   const [formNotice, setFormNotice] = useState(null);
 
   // Modal Detail & Modal Login Google
@@ -123,6 +193,13 @@ export default function App() {
       setFormReporterName(citizenUser.name);
     }
   }, [citizenUser, formReporterName]);
+
+  const openReportForm = () => {
+    setFormOpenedAt(Date.now());
+    setMathChallenge(createMathChallenge());
+    setMathInput('');
+    setMenu('lapor');
+  };
 
   // Reverse Geocoding Koordinat -> Nama Jalan & Kecamatan Asli
   const resolveAddressFromCoords = async (lat, lng) => {
@@ -226,7 +303,6 @@ export default function App() {
       return;
     }
 
-    // Lolos verifikasi Geofence Kabupaten Kudus
     setFormCoords({
       lat,
       lng,
@@ -252,13 +328,17 @@ export default function App() {
     { id: 'lacak', label: 'Lacak Laporan', icon: Search },
   ];
 
+  // Hanya laporan terverifikasi yang tampil di halaman depan publik
+  const publicVerifiedReports = reports.filter(
+    (r) => r.status !== 'Menunggu Verifikasi'
+  );
+
   const stats = {
-    total: reports.length,
-    verifikasi: reports.filter((r) => r.status === 'Menunggu Verifikasi').length,
-    penanganan: reports.filter(
-      (r) => r.status === 'Dalam Penanganan' || r.status === 'Ditugaskan'
-    ).length,
-    selesai: reports.filter((r) => r.status === 'Laporan Selesai').length,
+    total: publicVerifiedReports.length,
+    ditugaskan: publicVerifiedReports.filter((r) => r.status === 'Ditugaskan').length,
+    penanganan: publicVerifiedReports.filter((r) => r.status === 'Dalam Penanganan')
+      .length,
+    selesai: publicVerifiedReports.filter((r) => r.status === 'Laporan Selesai').length,
   };
 
   const completionPercent =
@@ -278,14 +358,24 @@ export default function App() {
     }
   };
 
-  const handlePhotoUpload = (e) => {
+  const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setFormImage(String(ev.target?.result || ''));
-    };
-    reader.readAsDataURL(file);
+    setFormNotice(null);
+    setImageStatusText('Memvalidasi & membersihkan metadata foto...');
+
+    try {
+      const cleanImage = await sanitizeAndCompressImage(file);
+      setFormImage(cleanImage);
+      setImageStatusText('Foto bukti terverifikasi siap dilampirkan.');
+    } catch (err) {
+      setFormImage('');
+      setImageStatusText('');
+      setFormNotice({
+        type: 'error',
+        text: err?.message || 'Foto bukti tidak valid.',
+      });
+    }
   };
 
   const handleSubmitReport = (e) => {
@@ -297,7 +387,27 @@ export default function App() {
       return;
     }
 
-    // 2. Validasi Ulang Geofence Kabupaten Kudus (Anti-Bypass)
+    // 2. Cek Kecepatan Ketik Manusia (minimal 5 detik sejak buka form)
+    if (Date.now() - formOpenedAt < 5000) {
+      setFormNotice({
+        type: 'error',
+        text: 'Terdeteksi aktivitas otomatis: Mohon isi formulir laporan secara wajar.',
+      });
+      return;
+    }
+
+    // 3. Cek Jawaban Verifikasi Matematika Anti-Bot
+    if (Number(mathInput.trim()) !== mathChallenge.answer) {
+      setFormNotice({
+        type: 'error',
+        text: `Jawaban verifikasi keamanan salah (${mathChallenge.a} + ${mathChallenge.b} = ${mathChallenge.answer}). Silakan coba lagi.`,
+      });
+      setMathChallenge(createMathChallenge());
+      setMathInput('');
+      return;
+    }
+
+    // 4. Validasi Geofence Kabupaten Kudus (Anti-Bypass)
     if (!formCoords || gpsState !== 'locked') {
       setFormNotice({
         type: 'error',
@@ -321,10 +431,25 @@ export default function App() {
       return;
     }
 
-    if (!formTitle.trim() || !formLocation.trim() || !formDescription.trim()) {
+    // 5. Validasi Anti-Iklan, Anti-Link & Kualitas Teks
+    const contentCheck = validateReportContent(
+      formTitle,
+      formDescription,
+      formLocation
+    );
+    if (!contentCheck.valid) {
       setFormNotice({
         type: 'error',
-        text: 'Judul kerusakan, detail alamat/patokan, dan deskripsi wajib diisi.',
+        text: contentCheck.error,
+      });
+      return;
+    }
+
+    // 6. Wajib Foto Bukti Lapangan
+    if (!formImage) {
+      setFormNotice({
+        type: 'error',
+        text: 'Wajib mengunggah foto bukti kerusakan di lapangan (maksimal 3 MB).',
       });
       return;
     }
@@ -337,7 +462,7 @@ export default function App() {
       return;
     }
 
-    // 3. Cek Rate Limiting (Jeda 30 detik & Maksimal 5 laporan / 24 jam)
+    // 7. Rate Limiting (Jeda 30 detik & Maksimal 5 laporan / 24 jam)
     const now = Date.now();
     let history = [];
     try {
@@ -364,29 +489,29 @@ export default function App() {
       return;
     }
 
-    const catObj =
-      KUDUS_CATEGORIES.find((c) => c.id === formCategory) || KUDUS_CATEGORIES[0];
     const ticketId = `SF-2026-${String(reports.length + 1).padStart(3, '0')}`;
-    const reporterFinalName =
-      (citizenUser?.name || formReporterName || 'Warga Kudus').trim();
+    const reporterFinalName = sanitizeText(
+      citizenUser?.name || formReporterName || 'Warga Kudus'
+    );
 
     const newReport = {
       id: ticketId,
-      title: formTitle.trim(),
+      title: sanitizeText(formTitle),
       category: formCategory,
       priority: formPriority,
-      location: formLocation.trim(),
+      location: sanitizeText(formLocation),
       mapUrl: `https://www.google.com/maps?q=${formCoords.lat},${formCoords.lng}`,
-      description: formDescription.trim(),
+      description: sanitizeText(formDescription),
       status: 'Menunggu Verifikasi',
       assignedOfficers: [],
-      reporter: reporterFinalName,
+      reporter: reporterFinalName || 'Warga Kudus',
       reporterEmail: citizenUser?.email || '',
       createdAt: new Date().toISOString(),
-      image: formImage || catObj.sampleImage,
+      image: formImage,
     };
 
     setReports((prev) => [newReport, ...prev]);
+    setMyTicketIds((prev) => [ticketId, ...prev]);
 
     try {
       localStorage.setItem(
@@ -400,21 +525,25 @@ export default function App() {
     setFormTitle('');
     setFormDescription('');
     setFormImage('');
+    setImageStatusText('');
     setIsManualPriority(false);
     setHumanVerified(false);
+    setMathChallenge(createMathChallenge());
+    setMathInput('');
+    setFormOpenedAt(Date.now());
 
     setFormNotice({
       type: 'success',
-      text: `Laporan terverifikasi terkirim dengan Nomor Tiket ${ticketId} (Prioritas ${formPriority})!`,
+      text: `Laporan terverifikasi terkirim (${ticketId})! Laporan akan tampil ke publik setelah lolos verifikasi Admin dan dapat dipantau di menu "Laporan Saya".`,
     });
     setDetailReport(newReport);
   };
 
   const handleGoogleLoginSubmit = (e) => {
     e.preventDefault();
-    const name = googleNameInput.trim() || 'Ahmad Maulana';
+    const name = sanitizeText(googleNameInput) || 'Ahmad Maulana';
     const email =
-      googleEmailInput.trim() ||
+      sanitizeText(googleEmailInput) ||
       `${name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`;
     setCitizenUser({ name, email, provider: 'Google' });
     setFormReporterName(name);
@@ -433,28 +562,45 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const baseFilteredReports = reports.filter((r) => {
-    const matchText =
-      r.id.toLowerCase().includes(search.toLowerCase()) ||
-      r.title.toLowerCase().includes(search.toLowerCase()) ||
-      r.location.toLowerCase().includes(search.toLowerCase());
-    if (!matchText) return false;
-
-    if (onlyMyReports && citizenUser) {
-      const isMine =
-        (r.reporterEmail && r.reporterEmail === citizenUser.email) ||
-        r.reporter.toLowerCase() === citizenUser.name.toLowerCase();
-      if (!isMine) return false;
+  const isOwnReport = (r) => {
+    if (myTicketIds.includes(r.id)) return true;
+    if (citizenUser) {
+      if (r.reporterEmail && r.reporterEmail === citizenUser.email) return true;
+      if (r.reporter.toLowerCase() === citizenUser.name.toLowerCase()) return true;
     }
+    return false;
+  };
+
+  const baseFilteredReports = reports.filter((r) => {
+    const query = search.trim().toLowerCase();
+    const isExactTicketLookup =
+      query.startsWith('sf-2026-') && r.id.toLowerCase() === query;
+
+    // Moderasi Pra-Tayang: Sembunyikan 'Menunggu Verifikasi' dari publik kecuali milik sendiri atau dicari persis dengan nomor tiket
+    if (
+      r.status === 'Menunggu Verifikasi' &&
+      !isOwnReport(r) &&
+      !isExactTicketLookup
+    ) {
+      return false;
+    }
+
+    if (onlyMyReports && !isOwnReport(r)) {
+      return false;
+    }
+
+    const matchText =
+      r.id.toLowerCase().includes(query) ||
+      r.title.toLowerCase().includes(query) ||
+      r.location.toLowerCase().includes(query);
+    if (!matchText) return false;
 
     if (priorityFilter !== 'semua' && getReportPriority(r) !== priorityFilter) {
       return false;
     }
 
-    if (statusFilter === 'verifikasi') return r.status === 'Menunggu Verifikasi';
-    if (statusFilter === 'penanganan') {
-      return r.status === 'Dalam Penanganan' || r.status === 'Ditugaskan';
-    }
+    if (statusFilter === 'ditugaskan') return r.status === 'Ditugaskan';
+    if (statusFilter === 'penanganan') return r.status === 'Dalam Penanganan';
     if (statusFilter === 'selesai') return r.status === 'Laporan Selesai';
     return true;
   });
@@ -512,7 +658,9 @@ export default function App() {
   const mutedText = darkMode ? 'text-slate-400' : 'text-slate-500';
 
   return (
-    <div className={`min-h-screen overflow-x-hidden transition-colors duration-300 pb-28 ${pageBg}`}>
+    <div
+      className={`min-h-screen overflow-x-hidden transition-colors duration-300 pb-28 ${pageBg}`}
+    >
       {/* TOP HEADER SOLID-BLUR */}
       <header
         className={`sticky top-0 z-40 py-3 px-4 sm:px-8 border-b backdrop-blur-xl transition-colors ${
@@ -611,7 +759,8 @@ export default function App() {
                 <div className="absolute -right-10 -bottom-10 w-44 h-44 rounded-full bg-white/10 blur-xl" />
                 <div className="space-y-2.5 relative">
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-[11px] font-bold">
-                    <ShieldCheck className="w-3.5 h-3.5" /> Geofence Aktif • Khusus Wilayah Kudus
+                    <ShieldCheck className="w-3.5 h-3.5" /> Geofence & Anti-Spam Aktif •
+                    Kabupaten Kudus
                   </span>
                   <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-snug">
                     {citizenUser
@@ -619,13 +768,14 @@ export default function App() {
                       : 'Laporkan Kerusakan Fasilitas Umum dengan Cepat & Terverifikasi'}
                   </h1>
                   <p className="text-xs sm:text-sm text-blue-100 max-w-xl leading-relaxed">
-                    Sistem memverifikasi lokasi GPS Anda secara langsung di area Kabupaten Kudus untuk mencegah laporan palsu.
+                    Dilengkapi verifikasi GPS khusus area Kabupaten Kudus, wajib foto
+                    bukti lapangan, serta moderasi otomatis bebas spam.
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 mt-6 relative">
                   <button
-                    onClick={() => setMenu('lapor')}
+                    onClick={openReportForm}
                     className="px-5 py-3 rounded-full bg-white text-blue-700 hover:bg-blue-50 text-xs font-extrabold flex items-center gap-2 shadow-lg transition cursor-pointer"
                   >
                     <PlusCircle className="w-4 h-4" /> Buat Laporan Sekarang
@@ -637,7 +787,7 @@ export default function App() {
                     }}
                     className="px-5 py-3 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer"
                   >
-                    <Search className="w-4 h-4" /> Lacak Semua Laporan
+                    <Search className="w-4 h-4" /> Lacak Laporan Publik
                   </button>
                 </div>
               </div>
@@ -648,9 +798,9 @@ export default function App() {
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-sm font-extrabold">Status Penanganan</h2>
+                    <h2 className="text-sm font-extrabold">Status Penanganan Publik</h2>
                     <p className={`text-xs mt-0.5 ${mutedText}`}>
-                      Total {stats.total} pengaduan warga tercatat
+                      Total {stats.total} laporan terverifikasi Admin
                     </p>
                   </div>
                   <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-blue-600/10 text-blue-600">
@@ -661,21 +811,23 @@ export default function App() {
                 <div className="grid grid-cols-3 gap-2.5">
                   <button
                     onClick={() => {
-                      setStatusFilter('verifikasi');
+                      setStatusFilter('ditugaskan');
+                      setOnlyMyReports(false);
                       setMenu('lacak');
                     }}
                     className={`p-3.5 rounded-2xl border text-left transition hover:border-blue-500/50 cursor-pointer ${subCardBg}`}
                   >
                     <Clock className="w-4 h-4 text-blue-600 mb-2" />
-                    <p className="text-2xl font-extrabold">{stats.verifikasi}</p>
+                    <p className="text-2xl font-extrabold">{stats.ditugaskan}</p>
                     <p className={`text-[11px] font-bold mt-0.5 ${mutedText}`}>
-                      Verifikasi
+                      Ditugaskan
                     </p>
                   </button>
 
                   <button
                     onClick={() => {
                       setStatusFilter('penanganan');
+                      setOnlyMyReports(false);
                       setMenu('lacak');
                     }}
                     className={`p-3.5 rounded-2xl border text-left transition hover:border-amber-500/50 cursor-pointer ${subCardBg}`}
@@ -690,6 +842,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       setStatusFilter('selesai');
+                      setOnlyMyReports(false);
                       setMenu('lacak');
                     }}
                     className={`p-3.5 rounded-2xl border text-left transition hover:border-emerald-500/50 cursor-pointer ${subCardBg}`}
@@ -717,15 +870,15 @@ export default function App() {
               </div>
             </div>
 
-            {/* Daftar Laporan Terkini */}
+            {/* Daftar Laporan Terverifikasi Terkini */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-extrabold">
-                    Laporan Fasilitas Umum Terkini
+                    Laporan Fasilitas Umum Terverifikasi
                   </h2>
                   <p className={`text-xs ${mutedText}`}>
-                    Diurutkan berdasarkan tingkat prioritas penanganan
+                    Hanya laporan valid yang sudah diverifikasi Admin yang tampil ke publik
                   </p>
                 </div>
                 <button
@@ -737,12 +890,12 @@ export default function App() {
                   }}
                   className="px-4 py-2 rounded-full bg-[#0f172a] hover:bg-blue-600 text-white text-xs font-bold transition cursor-pointer"
                 >
-                  Lihat Semua ({reports.length})
+                  Lihat Semua ({publicVerifiedReports.length})
                 </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {sortReportsByPriority(reports)
+                {sortReportsByPriority(publicVerifiedReports)
                   .slice(0, 6)
                   .map((item) => (
                     <div
@@ -840,7 +993,7 @@ export default function App() {
 
               {formNotice && (
                 <div
-                  className={`p-4 rounded-2xl border text-xs font-bold ${
+                  className={`p-4 rounded-2xl border text-xs font-bold leading-relaxed ${
                     formNotice.type === 'success'
                       ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600'
                       : 'bg-red-500/10 border-red-500/30 text-red-500'
@@ -986,11 +1139,12 @@ export default function App() {
               {/* 3. Judul */}
               <div className="space-y-1.5">
                 <label className="block text-xs font-extrabold">
-                  3. Judul Laporan
+                  3. Judul Laporan (Tanpa Link / Promosi)
                 </label>
                 <input
                   type="text"
                   required
+                  maxLength={100}
                   placeholder="Contoh: Jalan Berlubang Depan Pasar Kliwon Kudus"
                   value={formTitle}
                   onChange={(e) => handleTitleChange(e.target.value)}
@@ -1047,16 +1201,22 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 5. Deskripsi & Foto */}
+              {/* 5. Deskripsi & Wajib Foto Bukti */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-extrabold">
-                    5. Detail Kerusakan
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-extrabold">
+                      5. Detail Kerusakan
+                    </label>
+                    <span className={`text-[10px] font-semibold ${mutedText}`}>
+                      {formDescription.trim().length}/500
+                    </span>
+                  </div>
                   <textarea
                     rows={4}
                     required
-                    placeholder="Jelaskan kondisi kerusakan secara singkat..."
+                    maxLength={500}
+                    placeholder="Jelaskan kondisi kerusakan secara jelas (min. 20 karakter, tanpa tautan/nomor WA)..."
                     value={formDescription}
                     onChange={(e) => setFormDescription(e.target.value)}
                     className={`w-full px-4 py-3 rounded-2xl border text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 ${subCardBg}`}
@@ -1064,19 +1224,28 @@ export default function App() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-extrabold">
-                    6. Foto Bukti Lapangan
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-extrabold">
+                      6. Foto Bukti Lapangan *
+                    </label>
+                    <span className="text-[10px] font-extrabold text-red-500">
+                      Wajib (Maks 3MB)
+                    </span>
+                  </div>
                   <input
                     ref={photoInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp"
                     onChange={handlePhotoUpload}
                     className="hidden"
                   />
                   <div
                     onClick={() => photoInputRef.current?.click()}
-                    className={`h-[104px] rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-1.5 cursor-pointer overflow-hidden ${subCardBg}`}
+                    className={`h-[104px] rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-1.5 cursor-pointer overflow-hidden ${
+                      formImage
+                        ? 'border-emerald-500/60'
+                        : 'border-blue-500/40'
+                    } ${subCardBg}`}
                   >
                     {formImage ? (
                       <img
@@ -1088,25 +1257,31 @@ export default function App() {
                       <>
                         <Camera className="w-5 h-5 text-blue-600" />
                         <span className="text-[11px] font-bold">
-                          Unggah Foto Bukti
+                          Ambil / Unggah Foto Bukti
                         </span>
                         <span className={`text-[10px] ${mutedText}`}>
-                          Opsional (otomatis foto kategori)
+                          JPG, PNG, WEBP • Wajib ada bukti nyata
                         </span>
                       </>
                     )}
                   </div>
+                  {imageStatusText && (
+                    <p className="text-[10px] font-bold text-emerald-600">
+                      ✓ {imageStatusText}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              {/* 7. Pelapor & Konfirmasi */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+              {/* 7. Pelapor, Tantangan Anti-Bot & Konfirmasi */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-extrabold mb-1">
                     Nama Pelapor
                   </label>
                   <input
                     type="text"
+                    maxLength={60}
                     placeholder="Nama Anda (atau masuk Google)"
                     value={citizenUser ? citizenUser.name : formReporterName}
                     disabled={Boolean(citizenUser)}
@@ -1115,20 +1290,34 @@ export default function App() {
                   />
                 </div>
 
-                <label
-                  className={`p-3 rounded-2xl border flex items-center gap-2.5 cursor-pointer mt-2 sm:mt-5 ${subCardBg}`}
-                >
+                <div>
+                  <label className="block text-xs font-extrabold mb-1">
+                    Verifikasi Anti-Bot: {mathChallenge.a} + {mathChallenge.b} = ?
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={humanVerified}
-                    onChange={(e) => setHumanVerified(e.target.checked)}
-                    className="w-4 h-4 accent-blue-600 rounded"
+                    type="number"
+                    required
+                    placeholder="Ketik hasil penjumlahan..."
+                    value={mathInput}
+                    onChange={(e) => setMathInput(e.target.value)}
+                    className={`w-full px-4 py-2.5 rounded-2xl border text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 ${subCardBg}`}
                   />
-                  <span className="text-xs font-bold">
-                    Saya bertanggung jawab atas keaslian laporan ini
-                  </span>
-                </label>
+                </div>
               </div>
+
+              <label
+                className={`p-3 rounded-2xl border flex items-center gap-2.5 cursor-pointer ${subCardBg}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={humanVerified}
+                  onChange={(e) => setHumanVerified(e.target.checked)}
+                  className="w-4 h-4 accent-blue-600 rounded"
+                />
+                <span className="text-xs font-bold">
+                  Saya menyatakan laporan dan foto bukti ini asli, bukan iklan/spam, dan berada di Kabupaten Kudus.
+                </span>
+              </label>
 
               <button
                 type="submit"
@@ -1169,7 +1358,9 @@ export default function App() {
                       Keterangan Jangkauan GPS
                     </p>
                     <p className="text-[11px] text-white/90 mt-0.5 leading-relaxed">
-                      Layanan GPS hanya mendeteksi area di sekitar <strong>Kabupaten Kudus</strong>. Pastikan GPS perangkat aktif dan Anda berada di wilayah Kudus agar formulir terbuka.
+                      Layanan GPS hanya mendeteksi area di sekitar{' '}
+                      <strong>Kabupaten Kudus</strong>. Pastikan GPS perangkat aktif
+                      dan Anda berada di wilayah Kudus agar formulir terbuka.
                     </p>
                   </div>
                 </div>
@@ -1181,7 +1372,8 @@ export default function App() {
                       1. Kunci Titik Lokasi GPS
                     </p>
                     <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Tekan <strong>Verifikasi Lokasi GPS</strong> dan izinkan akses lokasi browser hingga alamat jalan terisi otomatis.
+                      Tekan <strong>Verifikasi Lokasi GPS</strong> dan izinkan akses
+                      lokasi browser hingga alamat jalan terisi otomatis.
                     </p>
                   </div>
 
@@ -1190,25 +1382,28 @@ export default function App() {
                       2. Pilih Kategori & Tulis Judul
                     </p>
                     <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Pilih kategori fasilitas yang rusak (Jalan, PJU, Drainase, Taman, atau Trotoar) lalu isi judul singkat yang jelas.
+                      Pilih kategori fasilitas yang rusak lalu isi judul singkat yang
+                      jelas tanpa mencantumkan tautan atau nomor kontak.
                     </p>
                   </div>
 
                   <div className="p-3 rounded-2xl bg-white/10">
                     <p className="font-extrabold text-purple-300">
-                      3. Isi Detail Kerusakan & Foto
+                      3. Isi Detail & Wajib Foto Bukti
                     </p>
                     <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Tentukan tingkat prioritas, jelaskan kondisi kerusakan di lapangan, dan unggah foto bukti bila tersedia.
+                      Jelaskan kondisi kerusakan minimal 20 karakter dan unggah foto
+                      bukti asli di lapangan (maksimal 3 MB).
                     </p>
                   </div>
 
                   <div className="p-3 rounded-2xl bg-white/10">
                     <p className="font-extrabold text-amber-200">
-                      4. Kirim & Pantau Nomor Tiket
+                      4. Verifikasi Anti-Bot & Pantau Tiket
                     </p>
                     <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
-                      Centang pernyataan tanggung jawab, tekan <strong>Kirim Laporan</strong>, lalu cek progres perbaikan di menu <strong>Lacak Laporan</strong>.
+                      Isi hitungan verifikasi, kirim laporan, lalu pantau statusnya di
+                      menu <strong>Lacak Laporan → Laporan Saya</strong>.
                     </p>
                   </div>
                 </div>
@@ -1224,8 +1419,8 @@ export default function App() {
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    { id: 'semua', label: 'Semua' },
-                    { id: 'verifikasi', label: 'Verifikasi' },
+                    { id: 'semua', label: 'Semua Publik' },
+                    { id: 'ditugaskan', label: 'Ditugaskan' },
                     { id: 'penanganan', label: 'Diproses' },
                     { id: 'selesai', label: 'Selesai' },
                   ].map((f) => (
@@ -1242,18 +1437,19 @@ export default function App() {
                     </button>
                   ))}
 
-                  {citizenUser && (
-                    <button
-                      onClick={() => setOnlyMyReports(!onlyMyReports)}
-                      className={`px-3.5 py-1.5 rounded-full text-xs font-extrabold border transition cursor-pointer ${
-                        onlyMyReports
-                          ? 'bg-[#0f172a] text-white border-[#0f172a]'
-                          : `${subCardBg} text-blue-600`
-                      }`}
-                    >
-                      Laporan Saya
-                    </button>
-                  )}
+                  <button
+                    onClick={() => {
+                      setOnlyMyReports(!onlyMyReports);
+                      setStatusFilter('semua');
+                    }}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-extrabold border transition cursor-pointer ${
+                      onlyMyReports
+                        ? 'bg-[#0f172a] text-white border-[#0f172a]'
+                        : `${subCardBg} text-blue-600`
+                    }`}
+                  >
+                    Laporan Saya
+                  </button>
                 </div>
 
                 <div className="relative w-full md:w-72">
@@ -1307,6 +1503,12 @@ export default function App() {
                   {sortByPriority ? 'Urut: Prioritas Tertinggi' : 'Urut: Terbaru'}
                 </button>
               </div>
+
+              <p className={`text-[11px] ${mutedText}`}>
+                * Laporan baru berstatus <strong>Menunggu Verifikasi</strong> hanya
+                tampil di menu <strong>Laporan Saya</strong> atau pencarian nomor tiket
+                persis hingga disetujui Admin.
+              </p>
             </div>
 
             {filteredReports.length === 0 ? (
@@ -1422,7 +1624,7 @@ export default function App() {
                     </ul>
                   ) : (
                     <p className={`italic mt-0.5 ${mutedText}`}>
-                      Menunggu penugasan tim lapangan
+                      Menunggu verifikasi Admin & penugasan tim lapangan
                     </p>
                   )}
                 </div>
@@ -1522,8 +1724,12 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => {
-                setMenu(item.id);
-                if (item.id !== 'lacak') setOnlyMyReports(false);
+                if (item.id === 'lapor') {
+                  openReportForm();
+                } else {
+                  setMenu(item.id);
+                  if (item.id !== 'lacak') setOnlyMyReports(false);
+                }
               }}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-2.5 sm:px-3.5 rounded-full text-[11px] sm:text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
                 active

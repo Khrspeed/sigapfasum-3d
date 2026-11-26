@@ -58,13 +58,22 @@ function calculateDistanceKm(lat1, lng1, lat2, lng2) {
 }
 
 export function validateKudusGeofence(lat, lng, accuracy = 0) {
-  if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng)) {
+  if (
+    typeof lat !== 'number' ||
+    typeof lng !== 'number' ||
+    Number.isNaN(lat) ||
+    Number.isNaN(lng)
+  ) {
     return { allowed: false, reason: 'invalid_coords', distanceKm: null };
   }
 
-  const distanceKm = calculateDistanceKm(lat, lng, KUDUS_CENTER.lat, KUDUS_CENTER.lng);
+  const distanceKm = calculateDistanceKm(
+    lat,
+    lng,
+    KUDUS_CENTER.lat,
+    KUDUS_CENTER.lng
+  );
 
-  // Cek apakah koordinat berada di dalam batas wilayah Kabupaten Kudus
   const inBoundingBox =
     lat >= -6.97 && lat <= -6.62 && lng >= 110.72 && lng <= 111.0;
   const inRadius = distanceKm <= 23;
@@ -77,7 +86,6 @@ export function validateKudusGeofence(lat, lng, accuracy = 0) {
     };
   }
 
-  // Tolak lokasi berbasis IP kasar / VPN dengan radius error > 1.500 meter
   if (accuracy > 1500) {
     return {
       allowed: false,
@@ -91,6 +99,91 @@ export function validateKudusGeofence(lat, lng, accuracy = 0) {
     reason: 'ok',
     distanceKm,
   };
+}
+
+// Sanitasi input teks untuk mencegah XSS & karakter berlebih
+export function sanitizeText(input = '') {
+  return String(input)
+    .replace(/<[^>]*>?/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Filter Anti-Iklan, Anti-Link, dan Kualitas Kalimat
+export function validateReportContent(title = '', description = '', location = '') {
+  const cleanTitle = sanitizeText(title);
+  const cleanDesc = sanitizeText(description);
+  const cleanLoc = sanitizeText(location);
+  const combined = `${cleanTitle} ${cleanDesc} ${cleanLoc}`;
+
+  // 1. Blokir tautan / domain / shortlink
+  const urlPattern =
+    /(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|id|net|org|xyz|site|online|top|vip|club|info|biz|me|io|co|link|ly|gg)\b|wa\.me|t\.me|bit\.ly|tinyurl)/i;
+  if (urlPattern.test(combined)) {
+    return {
+      valid: false,
+      error:
+        'Keamanan Konten: Laporan dilarang mengandung tautan (link) atau alamat situs web.',
+    };
+  }
+
+  // 2. Blokir kata kunci iklan, judi online, pinjol, dan promosi
+  const spamKeywordPattern =
+    /\b(slot|gacor|maxwin|judol|judi|togel|casino|sbobet|zeus|scatter|jackpot|pinjol|dana\s*cepat|cair\s*cepat|bokep|vcs|open\s*bo|jual\s*followers|klik\s*link|daftar\s*sekarang|bonus\s*new\s*member)\b/i;
+  if (spamKeywordPattern.test(combined)) {
+    return {
+      valid: false,
+      error:
+        'Keamanan Konten: Terdeteksi kata terlarang atau unsur promosi/iklan yang tidak berkaitan dengan fasilitas umum.',
+    };
+  }
+
+  // 3. Blokir penyebaran nomor HP/WhatsApp di kolom laporan publik
+  const phonePattern = /(\+62|628|08)[0-9\s-]{8,14}/;
+  if (phonePattern.test(combined)) {
+    return {
+      valid: false,
+      error:
+        'Keamanan Konten: Jangan mencantumkan nomor telepon atau WhatsApp di dalam judul maupun deskripsi laporan.',
+    };
+  }
+
+  // 4. Blokir spam karakter berulang (contoh: "aaaaaaa" atau "111111")
+  if (/(.)\1{5,}/.test(combined)) {
+    return {
+      valid: false,
+      error:
+        'Keamanan Konten: Hindari pengulangan huruf atau angka yang tidak wajar.',
+    };
+  }
+
+  // 5. Validasi panjang & jumlah kata minimal agar bukan isian asal-asalan
+  const titleWords = cleanTitle.split(' ').filter(Boolean);
+  if (cleanTitle.length < 8 || titleWords.length < 2) {
+    return {
+      valid: false,
+      error:
+        'Judul laporan terlalu singkat (minimal 8 karakter dan 2 kata yang jelas).',
+    };
+  }
+
+  const descWords = cleanDesc.split(' ').filter(Boolean);
+  if (cleanDesc.length < 20 || descWords.length < 4) {
+    return {
+      valid: false,
+      error:
+        'Detail kerusakan terlalu singkat (minimal 20 karakter dan 4 kata agar mudah dipahami petugas).',
+    };
+  }
+
+  if (cleanLoc.length < 6) {
+    return {
+      valid: false,
+      error: 'Detail alamat atau patokan lokasi belum lengkap.',
+    };
+  }
+
+  return { valid: true };
 }
 
 export const OFFICER_DIRECTORY = {
@@ -179,7 +272,8 @@ export const INITIAL_CITIZEN_REPORTS = [
     priority: 'Tinggi',
     location: 'Jl. Simpang Tujuh, Kec. Kota Kudus',
     mapUrl: 'https://www.google.com/maps?q=-6.8048,110.8405',
-    description: 'Lubang sedalam 15 cm di lajur kiri membahayakan pengendara motor saat malam hari.',
+    description:
+      'Lubang sedalam 15 cm di lajur kiri membahayakan pengendara motor saat malam hari.',
     status: 'Dalam Penanganan',
     assignedOfficers: ['petugas1', 'petugas3'],
     reporter: 'Ahmad Maulana',
@@ -195,7 +289,8 @@ export const INITIAL_CITIZEN_REPORTS = [
     priority: 'Sedang',
     location: 'Jl. Jenderal Sudirman, Rendeng, Kudus',
     mapUrl: 'https://www.google.com/maps?q=-6.8095,110.8482',
-    description: 'Tiga tiang lampu PJU padam sejak 3 hari lalu membuat jalanan gelap gulita.',
+    description:
+      'Tiga tiang lampu PJU padam sejak 3 hari lalu membuat jalanan gelap gulita.',
     status: 'Menunggu Verifikasi',
     assignedOfficers: [],
     reporter: 'Siti Nurhaliza',
@@ -211,7 +306,8 @@ export const INITIAL_CITIZEN_REPORTS = [
     priority: 'Sedang',
     location: 'Jl. Sunan Muria, Barongan, Kudus',
     mapUrl: 'https://www.google.com/maps?q=-6.7985,110.8420',
-    description: 'Air meluap ke badan jalan setiap kali hujan deras turun lebih dari 30 menit.',
+    description:
+      'Air meluap ke badan jalan setiap kali hujan deras turun lebih dari 30 menit.',
     status: 'Ditugaskan',
     assignedOfficers: ['petugas3'],
     reporter: 'Deni Pratama',
@@ -227,7 +323,8 @@ export const INITIAL_CITIZEN_REPORTS = [
     priority: 'Rendah',
     location: 'Jl. Pemuda, Kec. Kota Kudus',
     mapUrl: 'https://www.google.com/maps?q=-6.8062,110.8418',
-    description: 'Paving trotoar amblas sepanjang 3 meter dan berisiko membuat pejalan kaki tersandung.',
+    description:
+      'Paving trotoar amblas sepanjang 3 meter dan berisiko membuat pejalan kaki tersandung.',
     status: 'Ditugaskan',
     assignedOfficers: ['petugas5'],
     reporter: 'Ayu Lestari',
@@ -243,7 +340,8 @@ export const INITIAL_CITIZEN_REPORTS = [
     priority: 'Tinggi',
     location: 'Taman Krida Wisata, Wergu Wetan, Kudus',
     mapUrl: 'https://www.google.com/maps?q=-6.8150,110.8490',
-    description: 'Dahan pohon besar patah akibat angin kencang dan menghalangi jalur pejalan kaki.',
+    description:
+      'Dahan pohon besar patah akibat angin kencang dan menghalangi jalur pejalan kaki.',
     status: 'Laporan Selesai',
     assignedOfficers: ['petugas4'],
     reporter: 'Hendra Wijaya',
