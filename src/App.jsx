@@ -23,6 +23,7 @@ import {
   Sparkles,
   Crosshair,
   RefreshCw,
+  Info,
 } from 'lucide-react';
 import {
   INITIAL_CITIZEN_REPORTS,
@@ -213,7 +214,7 @@ export default function App() {
 
       if (check.reason === 'outside_kudus') {
         setGpsStatusText(
-          `Akses Ditolak: Lokasi Anda terdeteksi ${check.distanceKm} km dari pusat Kabupaten Kudus (di luar jangkauan layanan). Pelaporan hanya dapat dibuat saat berada di wilayah Kabupaten Kudus.`
+          `Akses Ditolak: Lokasi Anda terdeteksi ${check.distanceKm} km dari pusat Kabupaten Kudus (di luar jangkauan layanan). GPS hanya mendeteksi area sekitar Kabupaten Kudus.`
         );
       } else if (check.reason === 'low_accuracy') {
         setGpsStatusText(
@@ -300,7 +301,7 @@ export default function App() {
     if (!formCoords || gpsState !== 'locked') {
       setFormNotice({
         type: 'error',
-        text: 'Pelaporan diblokir: Wajib verifikasi GPS yang berada di dalam wilayah Kabupaten Kudus.',
+        text: 'Pelaporan diblokir: GPS hanya mendeteksi area sekitar Kabupaten Kudus.',
       });
       return;
     }
@@ -791,7 +792,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: FORM BUAT LAPORAN DENGAN GEOFENCE KETAT */}
+        {/* VIEW 2: FORM BUAT LAPORAN + TUTORIAL MENGISI LAPORAN */}
         {menu === 'lapor' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <form
@@ -815,7 +816,7 @@ export default function App() {
                     Buat Laporan Fasilitas Umum
                   </h2>
                   <p className={`text-xs mt-0.5 ${mutedText}`}>
-                    Wajib verifikasi lokasi GPS langsung di dalam wilayah Kabupaten Kudus.
+                    GPS hanya mendeteksi area sekitar Kabupaten Kudus.
                   </p>
                 </div>
                 <span
@@ -849,7 +850,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* 1. Verifikasi Lokasi GPS Geofence (Ditempatkan di urutan 1 agar langsung dicek) */}
+              {/* 1. Verifikasi Lokasi GPS */}
               <div
                 className={`p-4 rounded-2xl border space-y-3 ${
                   gpsState === 'blocked'
@@ -862,10 +863,10 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <label className="block text-xs font-extrabold">
-                      1. Verifikasi Lokasi GPS (Geofence Kabupaten Kudus)
+                      1. Verifikasi Lokasi GPS
                     </label>
                     <p className={`text-[11px] mt-0.5 ${mutedText}`}>
-                      Laporan ditolak otomatis jika posisi di luar Kudus atau GPS nonaktif.
+                      Catatan: GPS hanya mendeteksi area sekitar Kabupaten Kudus.
                     </p>
                   </div>
                   <button
@@ -914,7 +915,7 @@ export default function App() {
                   placeholder={
                     isSubmitUnlocked
                       ? 'Detail alamat / patokan lokasi di Kudus...'
-                      : 'Kunci lokasi GPS di Kabupaten Kudus terlebih dahulu...'
+                      : 'Kunci lokasi GPS di sekitar Kabupaten Kudus terlebih dahulu...'
                   }
                   value={formLocation}
                   onChange={(e) => setFormLocation(e.target.value)}
@@ -1150,38 +1151,64 @@ export default function App() {
               </button>
             </form>
 
-            {/* Kolom Kanan: Kebijakan Keamanan & Anti-Laporan Palsu */}
+            {/* Kolom Kanan: Tutorial Mengisi Laporan & Keterangan Jangkauan GPS */}
             <div className="lg:col-span-4 space-y-5">
               <div className="bento-dark-3d rounded-[28px] p-6 text-white space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-extrabold uppercase tracking-wider text-blue-300">
-                    Keamanan Anti-Laporan Palsu
+                    Tutorial Mengisi Laporan
                   </span>
-                  <ShieldCheck className="w-5 h-5 text-blue-400" />
+                  <CheckCircle2 className="w-5 h-5 text-blue-400" />
                 </div>
-                <div className="space-y-3 text-xs">
+
+                {/* Keterangan Khusus Jangkauan GPS */}
+                <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-400/30 flex items-start gap-2.5 text-xs">
+                  <Info className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold text-amber-300">
+                      Keterangan Jangkauan GPS
+                    </p>
+                    <p className="text-[11px] text-white/90 mt-0.5 leading-relaxed">
+                      Layanan GPS hanya mendeteksi area di sekitar <strong>Kabupaten Kudus</strong>. Pastikan GPS perangkat aktif dan Anda berada di wilayah Kudus agar formulir terbuka.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Langkah-langkah Tutorial */}
+                <div className="space-y-2.5 text-xs">
                   <div className="p-3 rounded-2xl bg-white/10">
                     <p className="font-extrabold text-emerald-300">
-                      🛡️ Geofencing Kabupaten Kudus
+                      1. Kunci Titik Lokasi GPS
                     </p>
-                    <p className="text-[11px] text-white/80 mt-0.5">
-                      Hanya perangkat yang terdeteksi berada di 9 kecamatan Kabupaten Kudus yang dapat mengirim aduan.
-                    </p>
-                  </div>
-                  <div className="p-3 rounded-2xl bg-white/10">
-                    <p className="font-extrabold text-amber-300">
-                      🚫 Tanpa Pengalihan Lokasi
-                    </p>
-                    <p className="text-[11px] text-white/80 mt-0.5">
-                      Pengguna di luar Kudus atau yang mematikan GPS/menggunakan VPN otomatis diblokir sistem.
+                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
+                      Tekan <strong>Verifikasi Lokasi GPS</strong> dan izinkan akses lokasi browser hingga alamat jalan terisi otomatis.
                     </p>
                   </div>
+
                   <div className="p-3 rounded-2xl bg-white/10">
                     <p className="font-extrabold text-blue-300">
-                      ⏱️ Batas Kirim Anti-Spam
+                      2. Pilih Kategori & Tulis Judul
                     </p>
-                    <p className="text-[11px] text-white/80 mt-0.5">
-                      Dibatasi jeda 30 detik antar laporan dan maksimal 5 aduan per 24 jam per perangkat.
+                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
+                      Pilih kategori fasilitas yang rusak (Jalan, PJU, Drainase, Taman, atau Trotoar) lalu isi judul singkat yang jelas.
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-white/10">
+                    <p className="font-extrabold text-purple-300">
+                      3. Isi Detail Kerusakan & Foto
+                    </p>
+                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
+                      Tentukan tingkat prioritas, jelaskan kondisi kerusakan di lapangan, dan unggah foto bukti bila tersedia.
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-white/10">
+                    <p className="font-extrabold text-amber-200">
+                      4. Kirim & Pantau Nomor Tiket
+                    </p>
+                    <p className="text-[11px] text-white/80 mt-0.5 leading-relaxed">
+                      Centang pernyataan tanggung jawab, tekan <strong>Kirim Laporan</strong>, lalu cek progres perbaikan di menu <strong>Lacak Laporan</strong>.
                     </p>
                   </div>
                 </div>
