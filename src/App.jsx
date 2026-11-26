@@ -184,9 +184,7 @@ export default function App() {
       if (!fix) return;
 
       setGpsState('locked');
-      setGpsStatusText(
-        `Terkunci dengan akurasi ±${fix.accuracy} meter`
-      );
+      setGpsStatusText(`Terkunci dengan akurasi ±${fix.accuracy} meter`);
 
       const resolvedAddress = await resolveAddressFromCoords(fix.lat, fix.lng);
       if (resolvedAddress) {
@@ -210,7 +208,6 @@ export default function App() {
           );
         }
 
-        // Jika akurasi sudah sangat tajam (<= 20 meter), langsung kunci
         if (accuracy <= 20) {
           finalizeBestFix();
         }
@@ -224,7 +221,7 @@ export default function App() {
         setGpsState('error');
         if (err.code === 1) {
           setGpsStatusText(
-            'Izin lokasi ditolak browser. Aktifkan izin lokasi di pengaturan browser atau pilih lokasi di bawah.'
+            'Izin lokasi ditolak browser. Aktifkan izin lokasi atau pilih titik lokasi di bawah.'
           );
         } else {
           setGpsStatusText(
@@ -239,7 +236,6 @@ export default function App() {
       }
     );
 
-    // Maksimal pemindaian 5.5 detik lalu kunci sampel paling akurat
     gpsTimerRef.current = setTimeout(() => {
       if (bestFixRef.current) {
         finalizeBestFix();
@@ -471,8 +467,8 @@ export default function App() {
   const mutedText = darkMode ? 'text-slate-400' : 'text-slate-500';
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 pb-24 md:pb-12 ${pageBg}`}>
-      {/* TOP CLEAN NAVBAR (3 MENU UTAMA) */}
+    <div className={`min-h-screen transition-colors duration-300 pb-28 ${pageBg}`}>
+      {/* TOP HEADER BERSIH (BRAND + TEMA + AKUN) */}
       <header className="sticky top-0 z-40 pt-4 px-4 sm:px-8">
         <div className="max-w-[1160px] mx-auto flex items-center justify-between gap-3">
           <button
@@ -486,42 +482,11 @@ export default function App() {
               <span className="text-lg font-extrabold tracking-tight block">
                 Sigap<span className="text-blue-600">Fasum</span>
               </span>
-              <span className={`text-[10px] font-semibold hidden sm:block ${mutedText}`}>
+              <span className={`text-[10px] font-semibold block ${mutedText}`}>
                 Kabupaten Kudus
               </span>
             </div>
           </button>
-
-          {/* Capsule Navigation (Simpel 3 Tab) */}
-          <nav
-            className={`hidden md:flex items-center gap-1 p-1.5 rounded-full border shadow-sm backdrop-blur-md ${
-              darkMode
-                ? 'bg-[#141b29]/90 border-slate-800'
-                : 'bg-white/95 border-slate-200/80'
-            }`}
-          >
-            {navTabs.map((t) => {
-              const active = menu === t.id;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    setMenu(t.id);
-                    if (t.id !== 'lacak') setOnlyMyReports(false);
-                  }}
-                  className={`px-5 py-2 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                    active
-                      ? darkMode
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'bg-[#0f172a] text-white shadow-md'
-                      : `${mutedText} hover:text-blue-600`
-                  }`}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </nav>
 
           {/* Right Controls */}
           <div className="flex items-center gap-2.5">
@@ -584,12 +549,11 @@ export default function App() {
         </div>
       </header>
 
-      {/* MAIN CONTENT (SINGLE CLEAN CONTAINER) */}
+      {/* MAIN CONTENT */}
       <main className="max-w-[1160px] mx-auto px-4 sm:px-8 pt-6 space-y-7">
-        {/* VIEW 1: BERANDA (BENTO RINGKAS & BERSIH) */}
+        {/* VIEW 1: BERANDA */}
         {menu === 'beranda' && (
           <div className="space-y-7">
-            {/* Hero Bento 2 Kolom */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               {/* Kartu Hero Biru 3D */}
               <div className="lg:col-span-7 bento-blue-3d rounded-[28px] p-6 sm:p-8 text-white flex flex-col justify-between relative overflow-hidden">
@@ -1421,12 +1385,13 @@ export default function App() {
         )}
       </main>
 
-      {/* BOTTOM NAVIGATION MOBILE (3 TAB SIMPEL) */}
+      {/* FLOATING BOTTOM DOCK (MENGAMBANG DI BAWAH UNTUK SEMUA LAYAR) */}
       <nav
-        className={`md:hidden fixed bottom-4 left-4 right-4 rounded-full border shadow-xl px-2 py-2 flex items-center justify-around z-40 backdrop-blur-md ${
+        aria-label="Navigasi Utama"
+        className={`fixed bottom-5 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md rounded-full border p-1.5 flex items-center justify-between gap-1 z-40 backdrop-blur-xl shadow-2xl transition-colors ${
           darkMode
-            ? 'bg-[#141b29]/95 border-slate-800'
-            : 'bg-white/95 border-slate-200'
+            ? 'bg-[#141b29]/90 border-slate-700/80 shadow-black/50'
+            : 'bg-white/95 border-slate-200/90 shadow-slate-900/15'
         }`}
       >
         {navTabs.map((item) => {
@@ -1435,13 +1400,18 @@ export default function App() {
           return (
             <button
               key={item.id}
-              onClick={() => setMenu(item.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold transition ${
-                active ? 'bento-blue-3d text-white' : mutedText
+              onClick={() => {
+                setMenu(item.id);
+                if (item.id !== 'lacak') setOnlyMyReports(false);
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-full text-xs font-extrabold transition-all cursor-pointer ${
+                active
+                  ? 'bento-blue-3d text-white shadow-md scale-[1.02]'
+                  : `${mutedText} hover:text-blue-600 hover:bg-blue-600/5`
               }`}
             >
-              <Icon className="w-4 h-4" />
-              <span>{item.label}</span>
+              <Icon className="w-4 h-4 shrink-0" />
+              <span className="truncate">{item.label}</span>
             </button>
           );
         })}
