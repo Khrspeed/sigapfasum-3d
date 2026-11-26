@@ -37,6 +37,11 @@ import {
 const STORAGE_REPORTS_KEY = 'sigapfasum_warga_reports_v3';
 const STORAGE_USER_KEY = 'sigapfasum_warga_user_v3';
 
+// Batas geografis Kabupaten Kudus & sekitarnya agar GPS PC/VPN tidak nyasar ke luar negeri
+function isWithinKudusRegion(lat, lng) {
+  return lat >= -7.15 && lat <= -6.55 && lng >= 110.55 && lng <= 111.15;
+}
+
 export default function App() {
   const [reports, setReports] = useState(() => {
     try {
@@ -97,7 +102,7 @@ export default function App() {
   const [isManualPriority, setIsManualPriority] = useState(false);
   const [formLocation, setFormLocation] = useState('');
   const [formCoords, setFormCoords] = useState(null); // { lat, lng, accuracy, source }
-  const [gpsState, setGpsState] = useState('idle'); // 'idle' | 'scanning' | 'locked' | 'error'
+  const [gpsState, setGpsState] = useState('idle'); // 'idle' | 'scanning' | 'locked' | 'warning'
   const [gpsStatusText, setGpsStatusText] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formReporterName, setFormReporterName] = useState('');
@@ -113,24 +118,6 @@ export default function App() {
   const [googleEmailInput, setGoogleEmailInput] = useState('');
 
   const photoInputRef = useRef(null);
-  const watchIdRef = useRef(null);
-  const gpsTimerRef = useRef(null);
-  const bestFixRef = useRef(null);
-
-  const stopGpsWatch = () => {
-    if (watchIdRef.current !== null && navigator.geolocation) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
-    if (gpsTimerRef.current) {
-      clearTimeout(gpsTimerRef.current);
-      gpsTimerRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    return () => stopGpsWatch();
-  }, []);
 
   useEffect(() => {
     if (citizenUser?.name && !formReporterName) {
@@ -163,88 +150,91 @@ export default function App() {
     }
   };
 
-  // GPS Akurasi Tinggi: Ambil beberapa sampel & pilih radius error terkecil
-  const handleAccurateGps = () => {
+  // Helper mengambil posisi dengan promise
+  const requestPosition = (options) =>
+    new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, options);
+    });
+
+  // GPS Hybrid (Mobile + Desktop Anti-Timeout & Validasi Wilayah Kudus)
+  const handleAccurateGps = async () => {
     setFormNotice(null);
-    stopGpsWatch();
 
     if (!navigator.geolocation) {
-      setGpsState('error');
-      setGpsStatusText('Browser tidak mendukung GPS. Pilih titik lokasi di bawah.');
+      const fallback = KUDUS_LOCATIONS[0];
+      setFormCoords({ lat: fallback.lat, lng: fallback.lng, accuracy: 15, source: 'preset' });
+      if (!formLocation.trim()) setFormLocation(fallback.name);
+      setGpsState('warning');
+      setGpsStatusText('Browser tidak mendukung GPS, diarahkan ke pusat Kabupaten Kudus.');
       return;
     }
 
-    bestFixRef.current = null;
     setGpsState('scanning');
-    setGpsStatusText('Mengunci sinyal satelit GPS akurasi tinggi...');
+    setGpsStatusText('Mendeteksi lokasi perangkat Anda...');
 
-    const finalizeBestFix = async () => {
-      stopGpsWatch();
-      const fix = bestFixRef.current;
-      if (!fix) return;
+    let position = null;
 
-      setGpsState('locked');
-      setGpsStatusText(`Terkunci dengan akurasi ±${fix.accuracy} meter`);
-
-      const resolvedAddress = await resolveAddressFromCoords(fix.lat, fix.lng);
-      if (resolvedAddress) {
-        setFormLocation(resolvedAddress);
-      } else if (!formLocation.trim()) {
-        setFormLocation(`Titik GPS (${fix.lat}, ${fix.lng}), Kabupaten Kudus`);
-      }
-    };
-
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const lat = Number(pos.coords.latitude.toFixed(6));
-        const lng = Number(pos.coords.longitude.toFixed(6));
-        const accuracy = Math.round(pos.coords.accuracy || 999);
-
-        if (!bestFixRef.current || accuracy < bestFixRef.current.accuracy) {
-          bestFixRef.current = { lat, lng, accuracy, source: 'gps' };
-          setFormCoords({ lat, lng, accuracy, source: 'gps' });
-          setGpsStatusText(
-            `Mengkalibrasi sinyal... akurasi terbaik saat ini ±${accuracy} meter`
-          );
-        }
-
-        if (accuracy <= 20) {
-          finalizeBestFix();
-        }
-      },
-      (err) => {
-        stopGpsWatch();
-        if (bestFixRef.current) {
-          finalizeBestFix();
-          return;
-        }
-        setGpsState('error');
-        if (err.code === 1) {
-          setGpsStatusText(
-            'Izin lokasi ditolak browser. Aktifkan izin lokasi atau pilih titik lokasi di bawah.'
-          );
-        } else {
-          setGpsStatusText(
-            'Sinyal GPS lemah/timeout. Coba ulangi di area terbuka atau pilih titik lokasi di bawah.'
-          );
-        }
-      },
-      {
+    try {
+      // Tahap 1: Coba GPS akurasi tinggi (cepat di HP outdoor)
+      position = await requestPosition({
         enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 15000,
+        timeout: 7000,
+        maximumAge: 10000,
+      });
+    } catch {
+      try {
+        // Tahap 2: Fallback ke lokasi jaringan/Wi-Fi (anti-timeout saat di dalam ruangan)
+        setGpsStatusText('Menggunakan jaringan Wi-Fi/seluler untuk mengunci titik...');
+        position = await requestPosition({
+          enableHighAccuracy: false,
+          timeout: 7000,
+          maximumAge: 30000,
+        });
+      } catch {
+        position = null;
       }
-    );
+    }
 
-    gpsTimerRef.current = setTimeout(() => {
-      if (bestFixRef.current) {
-        finalizeBestFix();
-      }
-    }, 5500);
+    if (!position) {
+      const fallback = KUDUS_LOCATIONS[0];
+      setFormCoords({ lat: fallback.lat, lng: fallback.lng, accuracy: 20, source: 'preset' });
+      if (!formLocation.trim()) setFormLocation(fallback.name);
+      setGpsState('warning');
+      setGpsStatusText(
+        'Izin GPS belum aktif / sinyal lemah. Titik diarahkan ke Simpang Tujuh Kudus (silakan pilih jalan di bawah jika berbeda).'
+      );
+      return;
+    }
+
+    const lat = Number(position.coords.latitude.toFixed(6));
+    const lng = Number(position.coords.longitude.toFixed(6));
+    const accuracy = Math.round(position.coords.accuracy || 50);
+
+    // Cek apakah lokasi berada di Kabupaten Kudus & sekitarnya (mencegah bug lokasi VPN/PC ke luar negeri)
+    if (!isWithinKudusRegion(lat, lng)) {
+      const fallback = KUDUS_LOCATIONS[0];
+      setFormCoords({ lat: fallback.lat, lng: fallback.lng, accuracy: 20, source: 'preset' });
+      if (!formLocation.trim()) setFormLocation(fallback.name);
+      setGpsState('warning');
+      setGpsStatusText(
+        'Lokasi jaringan PC terdeteksi di luar Kabupaten Kudus. Otomatis disesuaikan ke Pusat Kudus — pilih titik jalan di bawah agar presisi.'
+      );
+      return;
+    }
+
+    setFormCoords({ lat, lng, accuracy, source: 'gps' });
+    setGpsState('locked');
+    setGpsStatusText(`Lokasi GPS terkunci (akurasi ±${accuracy} meter)`);
+
+    const resolvedAddress = await resolveAddressFromCoords(lat, lng);
+    if (resolvedAddress) {
+      setFormLocation(resolvedAddress);
+    } else if (!formLocation.trim()) {
+      setFormLocation(`Titik GPS (${lat}, ${lng}), Kabupaten Kudus`);
+    }
   };
 
   const handleSelectPresetLocation = (locObj) => {
-    stopGpsWatch();
     setFormLocation(locObj.name);
     setFormCoords({ lat: locObj.lat, lng: locObj.lng, accuracy: 15, source: 'preset' });
     setGpsState('locked');
@@ -467,19 +457,25 @@ export default function App() {
   const mutedText = darkMode ? 'text-slate-400' : 'text-slate-500';
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 pb-28 ${pageBg}`}>
-      {/* TOP HEADER BERSIH (BRAND + TEMA + AKUN) */}
-      <header className="sticky top-0 z-40 pt-4 px-4 sm:px-8">
-        <div className="max-w-[1160px] mx-auto flex items-center justify-between gap-3">
+    <div className={`min-h-screen overflow-x-hidden transition-colors duration-300 pb-28 ${pageBg}`}>
+      {/* TOP HEADER SOLID-BLUR (ANTI TUMPANG TINDIH SAAT SCROLL) */}
+      <header
+        className={`sticky top-0 z-40 py-3 px-4 sm:px-8 border-b backdrop-blur-xl transition-colors ${
+          darkMode
+            ? 'bg-[#0b0f17]/90 border-slate-800/80'
+            : 'bg-[#f4f7fb]/90 border-slate-200/70'
+        }`}
+      >
+        <div className="max-w-[1160px] mx-auto flex items-center justify-between gap-2">
           <button
             onClick={() => setMenu('beranda')}
             className="flex items-center gap-2.5 cursor-pointer shrink-0"
           >
-            <div className="w-10 h-10 rounded-2xl bento-blue-3d text-white font-extrabold flex items-center justify-center text-sm">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bento-blue-3d text-white font-extrabold flex items-center justify-center text-xs sm:text-sm">
               SF
             </div>
             <div className="text-left leading-tight">
-              <span className="text-lg font-extrabold tracking-tight block">
+              <span className="text-base sm:text-lg font-extrabold tracking-tight block">
                 Sigap<span className="text-blue-600">Fasum</span>
               </span>
               <span className={`text-[10px] font-semibold block ${mutedText}`}>
@@ -489,11 +485,11 @@ export default function App() {
           </button>
 
           {/* Right Controls */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => setDarkMode(!darkMode)}
               title="Ubah Tema Terang / Gelap"
-              className={`w-10 h-10 rounded-full border flex items-center justify-center transition cursor-pointer ${
+              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center transition cursor-pointer ${
                 darkMode
                   ? 'bg-[#141b29] border-slate-800 text-amber-400'
                   : 'bg-white border-slate-200/80 text-slate-600 shadow-xs'
@@ -504,7 +500,7 @@ export default function App() {
 
             {citizenUser ? (
               <div
-                className={`flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full border ${
+                className={`flex items-center gap-2 pl-2 pr-2.5 py-1 rounded-full border ${
                   darkMode
                     ? 'bg-[#141b29] border-slate-800'
                     : 'bg-white border-slate-200/80 shadow-xs'
@@ -539,9 +535,9 @@ export default function App() {
             ) : (
               <button
                 onClick={() => setIsLoginModalOpen(true)}
-                className="px-4 py-2.5 rounded-full bento-blue-3d text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full bento-blue-3d text-white text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               >
-                <LogIn className="w-3.5 h-3.5" />
+                <LogIn className="w-3.5 h-3.5 shrink-0" />
                 <span>Masuk Google</span>
               </button>
             )}
@@ -741,19 +737,19 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: FORM BUAT LAPORAN + GPS AKURASI TINGGI */}
+        {/* VIEW 2: FORM BUAT LAPORAN + GPS HYBRID AKURAT */}
         {menu === 'lapor' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <form
               onSubmit={handleSubmitReport}
-              className={`lg:col-span-8 rounded-[28px] border p-6 sm:p-7 space-y-5 ${cardBg}`}
+              className={`lg:col-span-8 rounded-[28px] border p-5 sm:p-7 space-y-5 ${cardBg}`}
             >
               <div>
                 <h2 className="text-lg font-extrabold">
                   Buat Laporan Fasilitas Umum
                 </h2>
                 <p className={`text-xs mt-0.5 ${mutedText}`}>
-                  Kunci lokasi GPS agar petugas menemukan titik kerusakan secara presisi.
+                  Kunci lokasi GPS atau pilih titik jalan di Kabupaten Kudus agar petugas tepat sasaran.
                 </p>
               </div>
 
@@ -782,7 +778,7 @@ export default function App() {
                         key={cat.id}
                         type="button"
                         onClick={() => handleCategoryChange(cat.id)}
-                        className={`px-4 py-2 rounded-full text-xs font-bold border transition cursor-pointer ${
+                        className={`px-3.5 py-2 rounded-full text-xs font-bold border transition cursor-pointer ${
                           active
                             ? 'bento-blue-3d text-white border-blue-600'
                             : `${subCardBg} ${mutedText} hover:text-blue-600`
@@ -821,7 +817,7 @@ export default function App() {
                     {isManualPriority ? 'Dipilih manual' : 'Otomatis'}
                   </span>
                 </div>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-3 gap-2">
                   {PRIORITY_LEVELS.map((lvl) => {
                     const isActive = formPriority === lvl.id;
                     return (
@@ -832,7 +828,7 @@ export default function App() {
                           setFormPriority(lvl.id);
                           setIsManualPriority(true);
                         }}
-                        className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                        className={`p-2.5 sm:p-3 rounded-2xl border text-left transition cursor-pointer ${
                           isActive
                             ? lvl.activeBtnClass
                             : `${subCardBg} ${mutedText} hover:border-blue-500/50`
@@ -840,14 +836,14 @@ export default function App() {
                       >
                         <div className="flex items-center gap-1.5">
                           <span
-                            className={`w-2 h-2 rounded-full ${
+                            className={`w-2 h-2 rounded-full shrink-0 ${
                               isActive ? 'bg-white' : lvl.dotClass
                             }`}
                           />
                           <span className="text-xs font-extrabold">{lvl.label}</span>
                         </div>
                         <p
-                          className={`text-[10px] mt-1 ${
+                          className={`text-[10px] mt-1 leading-tight ${
                             isActive ? 'text-white/90' : 'opacity-80'
                           }`}
                         >
@@ -859,7 +855,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 4. GPS Akurasi Tinggi + Peta Pin */}
+              {/* 4. GPS Hybrid Akurat + Peta Pin */}
               <div className="space-y-2.5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <label className="block text-xs font-extrabold">
@@ -874,12 +870,12 @@ export default function App() {
                     {gpsState === 'scanning' ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Mengunci Satelit GPS...
+                        Mendeteksi Lokasi...
                       </>
                     ) : (
                       <>
                         <Crosshair className="w-3.5 h-3.5" />
-                        {formCoords ? 'Kalibrasi Ulang GPS' : 'Deteksi Lokasi GPS Akurat'}
+                        {formCoords ? 'Deteksi Ulang GPS' : 'Deteksi Lokasi GPS'}
                       </>
                     )}
                   </button>
@@ -887,11 +883,11 @@ export default function App() {
 
                 {gpsStatusText && (
                   <p
-                    className={`text-[11px] font-bold ${
-                      gpsState === 'error'
-                        ? 'text-red-500'
+                    className={`text-[11px] font-bold leading-relaxed ${
+                      gpsState === 'warning'
+                        ? 'text-amber-600'
                         : gpsState === 'scanning'
-                        ? 'text-amber-500'
+                        ? 'text-blue-600'
                         : 'text-emerald-600'
                     }`}
                   >
@@ -937,12 +933,12 @@ export default function App() {
                         {formCoords.accuracy && (
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                              formCoords.accuracy <= 35
+                              formCoords.accuracy <= 50
                                 ? 'bg-emerald-500/15 text-emerald-600'
                                 : 'bg-amber-500/15 text-amber-600'
                             }`}
                           >
-                            Akurasi ±{formCoords.accuracy} m
+                            ±{formCoords.accuracy} m
                           </span>
                         )}
                       </div>
@@ -952,7 +948,7 @@ export default function App() {
                         rel="noopener noreferrer"
                         className="text-blue-600 font-extrabold hover:underline inline-flex items-center gap-1"
                       >
-                        Buka Google Maps <ExternalLink className="w-3 h-3" />
+                        Google Maps <ExternalLink className="w-3 h-3" />
                       </a>
                     </div>
                     <iframe
@@ -1038,7 +1034,7 @@ export default function App() {
                 </div>
 
                 <label
-                  className={`p-3 rounded-2xl border flex items-center gap-2.5 cursor-pointer mt-4 sm:mt-5 ${subCardBg}`}
+                  className={`p-3 rounded-2xl border flex items-center gap-2.5 cursor-pointer mt-2 sm:mt-5 ${subCardBg}`}
                 >
                   <input
                     type="checkbox"
@@ -1073,7 +1069,7 @@ export default function App() {
                   <div className="p-3 rounded-2xl bg-white/10">
                     <p className="font-extrabold text-blue-300">📍 Kunci Lokasi Presisi</p>
                     <p className="text-[11px] text-white/80 mt-0.5">
-                      Tekan tombol GPS saat berada di dekat lokasi kerusakan agar radius akurasi di bawah 25 meter.
+                      Tekan tombol GPS saat berada di dekat lokasi kerusakan atau pilih titik jalan Kudus yang tersedia.
                     </p>
                   </div>
                   <div className="p-3 rounded-2xl bg-white/10">
@@ -1096,7 +1092,7 @@ export default function App() {
 
         {/* VIEW 3: LACAK LAPORAN */}
         {menu === 'lacak' && (
-          <div className={`rounded-[28px] border p-6 space-y-5 ${cardBg}`}>
+          <div className={`rounded-[28px] border p-5 sm:p-6 space-y-5 ${cardBg}`}>
             <div className="flex flex-col gap-3">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 {/* Filter Status + Laporan Saya */}
@@ -1110,7 +1106,7 @@ export default function App() {
                     <button
                       key={f.id}
                       onClick={() => setStatusFilter(f.id)}
-                      className={`px-4 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
                         statusFilter === f.id
                           ? 'bento-blue-3d text-white'
                           : `${subCardBg} ${mutedText}`
@@ -1123,7 +1119,7 @@ export default function App() {
                   {citizenUser && (
                     <button
                       onClick={() => setOnlyMyReports(!onlyMyReports)}
-                      className={`px-4 py-1.5 rounded-full text-xs font-extrabold border transition cursor-pointer ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-extrabold border transition cursor-pointer ${
                         onlyMyReports
                           ? 'bg-[#0f172a] text-white border-[#0f172a]'
                           : `${subCardBg} text-blue-600`
@@ -1385,12 +1381,12 @@ export default function App() {
         )}
       </main>
 
-      {/* FLOATING BOTTOM DOCK (MENGAMBANG DI BAWAH UNTUK SEMUA LAYAR) */}
+      {/* FLOATING BOTTOM DOCK (1 BARIS RAPI DI HP & DESKTOP) */}
       <nav
         aria-label="Navigasi Utama"
-        className={`fixed bottom-5 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md rounded-full border p-1.5 flex items-center justify-between gap-1 z-40 backdrop-blur-xl shadow-2xl transition-colors ${
+        className={`fixed bottom-4 left-1/2 -translate-x-1/2 w-[calc(100%-1.5rem)] max-w-md rounded-full border p-1.5 flex items-center justify-between gap-1 z-40 backdrop-blur-xl shadow-2xl transition-colors ${
           darkMode
-            ? 'bg-[#141b29]/90 border-slate-700/80 shadow-black/50'
+            ? 'bg-[#141b29]/95 border-slate-700/80 shadow-black/50'
             : 'bg-white/95 border-slate-200/90 shadow-slate-900/15'
         }`}
       >
@@ -1404,14 +1400,14 @@ export default function App() {
                 setMenu(item.id);
                 if (item.id !== 'lacak') setOnlyMyReports(false);
               }}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-full text-xs font-extrabold transition-all cursor-pointer ${
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-2.5 sm:px-3.5 rounded-full text-[11px] sm:text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
                 active
-                  ? 'bento-blue-3d text-white shadow-md scale-[1.02]'
+                  ? 'bento-blue-3d text-white shadow-md'
                   : `${mutedText} hover:text-blue-600 hover:bg-blue-600/5`
               }`}
             >
-              <Icon className="w-4 h-4 shrink-0" />
-              <span className="truncate">{item.label}</span>
+              <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span>{item.label}</span>
             </button>
           );
         })}
