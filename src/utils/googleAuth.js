@@ -1,4 +1,4 @@
-export const GOOGLE_CLIENT_ID = 752642813274-ic361bgkg9j848pfa1hot3blr459dl3s.apps.googleusercontent.com;
+export const GOOGLE_CLIENT_ID = '752642813274-ic361bgkg9j848pfa1hot3blr459dl3s.apps.googleusercontent.com';
 
 export function parseGoogleJwt(token) {
   try {

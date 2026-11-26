@@ -1,43 +1,31 @@
-import { useEffect, useState } from 'react';
-import { INITIAL_ADMIN_REPORTS } from './data/adminMockData';
-import LoginPage from './pages/LoginPage';
-import AdminDashboard from './pages/admin/AdminDashboard';
-import OfficerDashboard from './pages/officer/OfficerDashboard';
+import { useState } from 'react';
+import { ReportProvider } from './context/ReportContext';
+import { useSplash } from './hooks/useSplash';
+import AppShell from './components/layout/AppShell';
+import SplashPage from './pages/SplashPage';
+import HomePage from './pages/HomePage';
+import ReportFormPage from './pages/ReportFormPage';
+import TrackingPage from './pages/TrackingPage';
 
-const STORAGE_KEY = 'sigapfasum_admin_reports_v1';
+function MainContent() {
+  const showSplash = useSplash(1500);
+  const [tab, setTab] = useState('home');
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [reports, setReports] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : INITIAL_ADMIN_REPORTS;
-  });
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
-  }, [reports]);
-
-  if (!user) {
-    return <LoginPage onLogin={setUser} />;
-  }
-
-  if (user.role === 'admin') {
-    return (
-      <AdminDashboard
-        user={user}
-        reports={reports}
-        setReports={setReports}
-        onLogout={() => setUser(null)}
-      />
-    );
-  }
+  if (showSplash) return <SplashPage />;
 
   return (
-    <OfficerDashboard
-      user={user}
-      reports={reports}
-      setReports={setReports}
-      onLogout={() => setUser(null)}
-    />
+    <AppShell activeTab={tab} onChangeTab={setTab}>
+      {tab === 'home' && <HomePage onNavigate={setTab} />}
+      {tab === 'lapor' && <ReportFormPage onSuccess={() => setTab('home')} />}
+      {tab === 'lacak' && <TrackingPage />}
+    </AppShell>
+  );
+}
+
+export default function App() {
+  return (
+    <ReportProvider>
+      <MainContent />
+    </ReportProvider>
   );
 }

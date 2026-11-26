@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { X, User, Phone, ArrowRight } from 'lucide-react';
-import { GOOGLE_CLIENT_ID, parseGoogleJwt } from '../../utils/googleAuth';
+import { parseGoogleJwt } from '../../utils/googleAuth';
 import { useReports } from '../../context/ReportContext';
 
 export default function AuthModal({ isOpen, onClose }) {
@@ -10,9 +10,6 @@ export default function AuthModal({ isOpen, onClose }) {
   const [contact, setContact] = useState('');
 
   if (!isOpen) return null;
-
-  const isGoogleReady =
-    GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.includes('TEMPEL_GOOGLE_CLIENT_ID');
 
   const handleGoogleSuccess = (credentialResponse) => {
     const profile = parseGoogleJwt(credentialResponse.credential);
@@ -36,12 +33,14 @@ export default function AuthModal({ isOpen, onClose }) {
       avatar: null,
       provider: 'manual',
     });
+    setName('');
+    setContact('');
     onClose();
   };
 
   return (
     <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 relative animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 relative">
         <button
           onClick={onClose}
           className="absolute right-4 top-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 cursor-pointer"
@@ -55,45 +54,30 @@ export default function AuthModal({ isOpen, onClose }) {
           </div>
           <h3 className="text-xl font-extrabold text-slate-900 pt-2">Masuk Akun Warga</h3>
           <p className="text-xs text-slate-500">
-            Gunakan akun Google atau isi nama agar laporanmu tercatat otomatis.
+            Login menggunakan akun Google atau isi namamu agar tercatat saat melapor.
           </p>
         </div>
 
-        {/* Tombol Login Google */}
-        <div className="flex flex-col items-center">
-          {isGoogleReady ? (
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={() => alert('Gagal masuk dengan Google, silakan coba lagi.')}
-              shape="pill"
-              size="large"
-              text="continue_with"
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() =>
-                alert('Isi GOOGLE_CLIENT_ID di src/utils/googleAuth.js terlebih dahulu.')
-              }
-              className="w-full py-3 px-4 rounded-2xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 flex items-center justify-center gap-2.5 shadow-xs cursor-pointer"
-            >
-              <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-extrabold flex items-center justify-center text-[11px]">
-                G
-              </span>
-              Lanjutkan dengan Akun Google
-            </button>
-          )}
+        {/* Tombol Login Google Asli */}
+        <div className="flex justify-center">
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => alert('Login Google gagal. Cek kembali Authorized JavaScript origins di Google Cloud Console.')}
+            shape="pill"
+            size="large"
+            text="continue_with"
+          />
         </div>
 
         <div className="relative flex items-center justify-center">
           <div className="border-t border-slate-200 w-full" />
           <span className="bg-white px-3 text-[11px] font-semibold text-slate-400 uppercase">
-            atau masuk manual
+            atau isi nama warga
           </span>
           <div className="border-t border-slate-200 w-full" />
         </div>
 
-        {/* Form Masuk / Daftar Warga */}
+        {/* Form Nama Warga */}
         <form onSubmit={handleManualSubmit} className="space-y-3.5">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">Nama Lengkap</label>

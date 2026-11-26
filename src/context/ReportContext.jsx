@@ -5,10 +5,23 @@ const ReportContext = createContext(null);
 const USER_STORAGE_KEY = 'sigapfasum_citizen_user';
 
 export function ReportProvider({ children }) {
-  const [reports, setReports] = useState(() => reportService.getAll());
+  const [reports, setReports] = useState(() => {
+    try {
+      const data = reportService.getAll();
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem(USER_STORAGE_KEY);
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem(USER_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      localStorage.removeItem(USER_STORAGE_KEY);
+      return null;
+    }
   });
 
   const loginUser = (userData) => {
