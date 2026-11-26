@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Camera,
+  ImagePlus,
+  Trash2,
   MapPin,
   Send,
   CheckCircle2,
@@ -15,19 +17,65 @@ import { FACILITY_CATEGORIES } from '../data/mockReports';
 import Card3D from '../components/ui/Card3D';
 import Button3D from '../components/ui/Button3D';
 
+// Fungsi kompresi foto agar ringan & aman disimpan di browser / dikirim ke API
+function compressImageFile(file, maxWidth = 800, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, maxWidth / img.width);
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function ReportFormPage({ onSuccess }) {
-  const { addReport, user } = useReports();
+  const { addReport, user } = useReports() || {};
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('jalan');
   const [locationDetail, setLocationDetail] = useState('');
   const [description, setDescription] = useState('');
 
-  // State khusus Share Lokasi GPS (Anti Laporan Palsu)
+  // State Kamera & Foto
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
+
+  // State Share Lokasi GPS
   const [coords, setCoords] = useState(null);
   const [detectedAddress, setDetectedAddress] = useState('');
   const [locLoading, setLocLoading] = useState(false);
   const [locError, setLocError] = useState('');
   const [createdTicket, setCreatedTicket] = useState(null);
+
+  const handlePhotoChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPhotoLoading(true);
+    try {
+      const compressedDataUrl = await compressImageFile(file);
+      setPhotoPreview(compressedDataUrl);
+    } catch {
+      alert('Gagal memproses foto. Silakan coba ambil ulang.');
+    } finally {
+      setPhotoLoading(false);
+      e.target.value = '';
+    }
+  };
 
   const handleShareLocation = () => {
     if (!navigator.geolocation) {
@@ -46,7 +94,6 @@ export default function ReportFormPage({ onSuccess }) {
 
         setCoords({ lat, lng, accuracy });
 
-        // Terjemahkan koordinat menjadi nama jalan/desa otomatis
         try {
           const res = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
@@ -66,7 +113,9 @@ export default function ReportFormPage({ onSuccess }) {
       (err) => {
         setLocLoading(false);
         if (err.code === 1) {
-          setLocError('Izin lokasi ditolak. Klik ikon gembok di samping alamat web lalu pilih "Allow / Izinkan" pada Lokasi.');
+          setLocError(
+            'Izin lokasi ditolak. Klik ikon gembok di samping alamat web lalu pilih "Allow / Izinkan" pada Lokasi.'
+          );
         } else {
           setLocError('Gagal mendeteksi titik GPS. Pastikan GPS/Lokasi perangkat aktif lalu coba lagi.');
         }
@@ -79,7 +128,7 @@ export default function ReportFormPage({ onSuccess }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!title || !coords) return;
+    if (!title || !coords || !photoPreview) return;
 
     const finalLocation = locationDetail.trim() || detectedAddress || `${coords.lat}, ${coords.lng}`;
 
@@ -91,6 +140,7 @@ export default function ReportFormPage({ onSuccess }) {
       mapUrl,
       isGpsVerified: true,
       description,
+      image: photoPreview,
       reporter: user ? user.name : 'Warga Kudus',
     });
     setCreatedTicket(result);
@@ -103,9 +153,9 @@ export default function ReportFormPage({ onSuccess }) {
           <div className="w-16 h-16 rounded-3xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
             <CheckCircle2 className="w-9 h-9" />
           </div>
-          <h2 className="text-xl font-extrabold text-slate-900">Laporan & Titik GPS Terkirim!</h2>
+          <h2 className="text-xl font-extrabold text-slate-900">Laporan, Foto & GPS Terkirim!</h2>
           <p className="text-xs text-slate-500">
-            Lokasi GPS asli sudah terkunci dan dapat langsung dibuka petugas di Google Maps:
+            Bukti foto lapangan dan koordinat GPS sudah terkunci pada nomor tiket berikut:
           </p>
           <div className="py-3 px-4 rounded-2xl bg-slate-100 font-mono text-lg font-extrabold text-blue-600">
             {createdTicket.id}
@@ -126,12 +176,14 @@ export default function ReportFormPage({ onSuccess }) {
     );
   }
 
+  const isReadyToSubmit = Boolean(coords && photoPreview && title.trim());
+
   return (
     <div className="max-w-2xl mx-auto space-y-5">
       <div>
         <h2 className="text-xl md:text-2xl font-extrabold text-slate-900">Buat Pengaduan Baru</h2>
         <p className="text-xs md:text-sm text-slate-500">
-          Wajib bagikan titik lokasi GPS langsung dari tempat kejadian agar laporan valid.
+          Lampirkan foto bukti kerusakan dan kunci titik lokasi GPS di Kabupaten Kudus.
         </p>
       </div>
 
@@ -164,7 +216,7 @@ export default function ReportFormPage({ onSuccess }) {
             </select>
           </div>
 
-          {/* Bagian Share Lokasi ala WhatsApp */}
+          {/* Bagian Share Lokasi GPS */}
           <div className="space-y-3 pt-1">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-slate-700">
@@ -206,7 +258,6 @@ export default function ReportFormPage({ onSuccess }) {
               </div>
             )}
 
-            {/* Pratinjau Mini Map + Pin Lokasi */}
             {coords && (
               <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 space-y-2">
                 <iframe
@@ -231,7 +282,6 @@ export default function ReportFormPage({ onSuccess }) {
               </div>
             )}
 
-            {/* Detail Patokan Alamat */}
             <div className="relative">
               <MapPin className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
               <input
@@ -256,19 +306,101 @@ export default function ReportFormPage({ onSuccess }) {
             />
           </div>
 
-          <div className="border-2 border-dashed border-slate-200 rounded-2xl p-4 text-center text-xs text-slate-500 flex flex-col items-center gap-1">
-            <Camera className="w-6 h-6 text-blue-500" />
-            <span>Foto otomatis dilampirkan (Mode Simulasi)</span>
+          {/* Bagian Kamera & Upload Bukti Foto */}
+          <div className="space-y-2">
+            <label className="block text-xs font-bold text-slate-700">
+              Foto Bukti Kerusakan (Wajib)
+            </label>
+
+            {/* Input tersembunyi untuk Kamera Langsung & Galeri */}
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhotoChange}
+              className="hidden"
+            />
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handlePhotoChange}
+              className="hidden"
+            />
+
+            {photoLoading ? (
+              <div className="border-2 border-dashed border-blue-300 rounded-2xl p-6 text-center text-xs text-blue-600 flex flex-col items-center gap-2 bg-blue-50/40">
+                <Loader2 className="w-6 h-6 animate-spin" />
+                <span>Memproses dan mengompresi foto...</span>
+              </div>
+            ) : photoPreview ? (
+              <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100">
+                <img
+                  src={photoPreview}
+                  alt="Pratinjau Bukti Kerusakan"
+                  className="w-full h-56 object-cover"
+                />
+                <div className="p-3 bg-white flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                    <CheckCircle2 className="w-4 h-4" /> Foto siap dilampirkan
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="px-3 py-1.5 rounded-xl bg-blue-50 text-blue-600 text-xs font-bold hover:bg-blue-100 cursor-pointer"
+                    >
+                      Foto Ulang
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPhotoPreview(null)}
+                      className="p-1.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 cursor-pointer"
+                      title="Hapus Foto"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="border-2 border-dashed border-slate-300 rounded-2xl p-5 bg-slate-50/70 space-y-3 text-center">
+                <p className="text-xs text-slate-500">
+                  Ambil foto langsung dari kamera di lokasi atau pilih gambar dari perangkat:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" /> Buka Kamera
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer"
+                  >
+                    <ImagePlus className="w-4 h-4" /> Pilih dari Galeri
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </Card3D>
 
         <Button3D
           type="submit"
-          disabled={!coords}
-          className={!coords ? 'opacity-50 !cursor-not-allowed' : ''}
+          disabled={!isReadyToSubmit}
+          className={!isReadyToSubmit ? 'opacity-50 !cursor-not-allowed' : ''}
         >
           <Send className="w-4 h-4" />
-          {coords ? 'Kirim Pengaduan Sekarang' : 'Kunci Lokasi GPS Dulu untuk Mengirim'}
+          {!coords
+            ? 'Kunci Lokasi GPS Dulu'
+            : !photoPreview
+            ? 'Lampirkan Foto Bukti Dulu'
+            : 'Kirim Pengaduan Sekarang'}
         </Button3D>
       </form>
     </div>
