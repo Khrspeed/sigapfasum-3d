@@ -28,7 +28,9 @@ export default function HomePage({ onNavigate }) {
             <span className="px-3 py-1 rounded-lg bg-amber-400 text-slate-950 text-xs font-extrabold uppercase tracking-wider">
               Respon Cepat 24 Jam
             </span>
-            <span className="text-xs text-slate-300">Halo, {user.name}</span>
+            <span className="text-xs text-slate-300">
+                 Halo, {user ? user.name : 'Warga Kudus'}
+            </span>
           </div>
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold leading-tight">
             Laporkan Kerusakan Fasilitas Umum di{" "}

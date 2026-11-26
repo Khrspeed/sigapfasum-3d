@@ -1,33 +1,43 @@
-import { useState } from "react";
-import { ReportProvider } from "./context/ReportContext";
-import { useSplash } from "./hooks/useSplash";
-import AppShell from "./components/layout/AppShell";
-import SplashPage from "./pages/SplashPage";
-import HomePage from "./pages/HomePage";
-import ReportFormPage from "./pages/ReportFormPage";
-import TrackingPage from "./pages/TrackingPage";
-import AdminPage from "./pages/AdminPage";
+import { useEffect, useState } from 'react';
+import { INITIAL_ADMIN_REPORTS } from './data/adminMockData';
+import LoginPage from './pages/LoginPage';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import OfficerDashboard from './pages/officer/OfficerDashboard';
 
-function MainContent() {
-  const showSplash = useSplash(2000);
-  const [tab, setTab] = useState("home");
-
-  if (showSplash) return <SplashPage />;
-
-  return (
-    <AppShell activeTab={tab} onChangeTab={setTab}>
-      {tab === "home" && <HomePage onNavigate={setTab} />}
-      {tab === "lapor" && <ReportFormPage onSuccess={() => setTab("home")} />}
-      {tab === "lacak" && <TrackingPage />}
-      {tab === "admin" && <AdminPage />}
-    </AppShell>
-  );
-}
+const STORAGE_KEY = 'sigapfasum_admin_reports_v1';
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [reports, setReports] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) : INITIAL_ADMIN_REPORTS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
+  }, [reports]);
+
+  if (!user) {
+    return <LoginPage onLogin={setUser} />;
+  }
+
+  if (user.role === 'admin') {
+    return (
+      <AdminDashboard
+        user={user}
+        reports={reports}
+        setReports={setReports}
+        onLogout={() => setUser(null)}
+      />
+    );
+  }
+
   return (
-    <ReportProvider>
-      <MainContent />
-    </ReportProvider>
+    <OfficerDashboard
+      user={user}
+      reports={reports}
+      setReports={setReports}
+      onLogout={() => setUser(null)}
+    />
   );
 }
