@@ -40,11 +40,16 @@ const STORAGE_REPORTS_KEY = 'sigapfasum_warga_reports_v3';
 const STORAGE_SUBMISSION_LOG_KEY = 'sigapfasum_submission_log_v1';
 const STORAGE_MY_TICKETS_KEY = 'sigapfasum_my_tickets_v1';
 
-function createMathChallenge() {
-  const a = Math.floor(Math.random() * 8) + 2; // 2..9
-  const b = Math.floor(Math.random() * 8) + 1; // 1..8
-  return { a, b, answer: a + b };
-}
+// Ganti dengan Site Key asli dari Cloudflare Turnstile Dashboard saat siap ke produksi
+const TURNSTILE_SITE_KEY =
+  import.meta.env.VITE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
+
+const CATEGORY_OPTIONS = KUDUS_CATEGORIES.some((c) => c.id === 'Lainnya')
+  ? KUDUS_CATEGORIES
+  : [
+      ...KUDUS_CATEGORIES,
+      { id: 'Lainnya', label: 'Lainnya', defaultPriority: 'Sedang' },
+    ];
 
 // Re-encode & kompres foto via Canvas untuk membersihkan metadata EXIF & membatasi ukuran
 function sanitizeAndCompressImage(file) {
@@ -135,10 +140,11 @@ export default function App() {
   const [sortByPriority, setSortByPriority] = useState(true);
   const [search, setSearch] = useState('');
 
-  // Form Buat Laporan + Geofence + Anti-Bot
-  const [formCategory, setFormCategory] = useState(KUDUS_CATEGORIES[0].id);
+  // Form Buat Laporan + Geofence + Cloudflare Turnstile
+  const [formCategory, setFormCategory] = useState(CATEGORY_OPTIONS[0].id);
+  const [formCustomCategory, setFormCustomCategory] = useState('');
   const [formTitle, setFormTitle] = useState('');
-  const [formPriority, setFormPriority] = useState(KUDUS_CATEGORIES[0].defaultPriority);
+  const [formPriority, setFormPriority] = useState(CATEGORY_OPTIONS[0].defaultPriority);
   const [isManualPriority, setIsManualPriority] = useState(false);
   const [formLocation, setFormLocation] = useState('');
   const [formCoords, setFormCoords] = useState(null);
@@ -150,8 +156,9 @@ export default function App() {
   const [imageStatusText, setImageStatusText] = useState('');
   const [humanVerified, setHumanVerified] = useState(false);
   const [honeypotTrap, setHoneypotTrap] = useState('');
-  const [mathChallenge, setMathChallenge] = useState(() => createMathChallenge());
-  const [mathInput, setMathInput] = useState('');
+  const [hasHumanInteraction, setHasHumanInteraction] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileStatus, setTurnstileStatus] = useState('verifying'); // 'verifying' | 'verified' | 'unavailable'
   const [formOpenedAt, setFormOpenedAt] = useState(() => Date.now());
   const [formNotice, setFormNotice] = useState(null);
 
@@ -159,11 +166,94 @@ export default function App() {
   const [detailReport, setDetailReport] = useState(null);
 
   const photoInputRef = useRef(null);
+  const turnstileContainerRef = useRef(null);
+  const turnstileWidgetIdRef = useRef(null);
+
+  // Jalankan Cloudflare Turnstile otomatis di latar belakang saat membuka form
+  useEffect(() => {
+    if (menu !== 'lapor') return;
+
+    let cancelled = false;
+    setTurnstileToken('');
+    setTurnstileStatus('verifying');
+
+    const renderWidget = () => {
+      if (cancelled || !turnstileContainerRef.current || !window.turnstile) return;
+      if (turnstileWidgetIdRef.current !== null) {
+        try {
+          window.turnstile.remove(turnstileWidgetIdRef.current);
+        } catch {
+          // Abaikan jika widget sudah dihapus
+        }
+        turnstileWidgetIdRef.current = null;
+      }
+
+      turnstileWidgetIdRef.current = window.turnstile.render(
+        turnstileContainerRef.current,
+        {
+          sitekey: TURNSTILE_SITE_KEY,
+          theme: darkMode ? 'dark' : 'light',
+          appearance: 'interaction-only',
+          callback: (token) => {
+            if (cancelled) return;
+            setTurnstileToken(token);
+            setTurnstileStatus('verified');
+          },
+          'expired-callback': () => {
+            if (cancelled) return;
+            setTurnstileToken('');
+            setTurnstileStatus('verifying');
+            if (window.turnstile && turnstileWidgetIdRef.current !== null) {
+              window.turnstile.reset(turnstileWidgetIdRef.current);
+            }
+          },
+          'error-callback': () => {
+            if (cancelled) return;
+            setTurnstileToken('');
+            setTurnstileStatus('unavailable');
+          },
+        }
+      );
+    };
+
+    if (window.turnstile) {
+      renderWidget();
+    } else {
+      const existingScript = document.querySelector(
+        'script[src^="https://challenges.cloudflare.com/turnstile/v0/api.js"]'
+      );
+      if (existingScript) {
+        existingScript.addEventListener('load', renderWidget);
+      } else {
+        const script = document.createElement('script');
+        script.src =
+          'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+        script.async = true;
+        script.defer = true;
+        script.onload = renderWidget;
+        script.onerror = () => {
+          if (!cancelled) setTurnstileStatus('unavailable');
+        };
+        document.head.appendChild(script);
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      if (window.turnstile && turnstileWidgetIdRef.current !== null) {
+        try {
+          window.turnstile.remove(turnstileWidgetIdRef.current);
+        } catch {
+          // Abaikan error cleanup
+        }
+        turnstileWidgetIdRef.current = null;
+      }
+    };
+  }, [menu, darkMode]);
 
   const openReportForm = () => {
     setFormOpenedAt(Date.now());
-    setMathChallenge(createMathChallenge());
-    setMathInput('');
+    setHasHumanInteraction(false);
     setMenu('lapor');
   };
 
@@ -199,6 +289,7 @@ export default function App() {
 
   // Verifikasi GPS Ketat Tanpa Pengalihan Lokasi Palsu
   const handleStrictGpsVerification = async () => {
+    setHasHumanInteraction(true);
     setFormNotice(null);
     setFormCoords(null);
 
@@ -311,20 +402,32 @@ export default function App() {
     stats.total > 0 ? Math.round((stats.selesai / stats.total) * 100) : 0;
 
   const handleCategoryChange = (newCat) => {
+    setHasHumanInteraction(true);
     setFormCategory(newCat);
+    if (newCat !== 'Lainnya') {
+      setFormCustomCategory('');
+    }
     if (!isManualPriority) {
-      setFormPriority(detectAutoPriority(newCat, formTitle));
+      setFormPriority(
+        newCat === 'Lainnya' ? 'Sedang' : detectAutoPriority(newCat, formTitle)
+      );
     }
   };
 
   const handleTitleChange = (newTitle) => {
+    setHasHumanInteraction(true);
     setFormTitle(newTitle);
     if (!isManualPriority) {
-      setFormPriority(detectAutoPriority(formCategory, newTitle));
+      setFormPriority(
+        formCategory === 'Lainnya'
+          ? 'Sedang'
+          : detectAutoPriority(formCategory, newTitle)
+      );
     }
   };
 
   const handlePhotoUpload = async (e) => {
+    setHasHumanInteraction(true);
     const file = e.target.files?.[0];
     if (!file) return;
     setFormNotice(null);
@@ -348,13 +451,17 @@ export default function App() {
     e.preventDefault();
     setFormNotice(null);
 
-    // 1. Cek Honeypot Anti-Bot
-    if (honeypotTrap.trim() !== '') {
+    // 1. Cek Honeypot & Interaksi Manusia di Latar Belakang
+    if (honeypotTrap.trim() !== '' || !hasHumanInteraction) {
+      setFormNotice({
+        type: 'error',
+        text: 'Terdeteksi aktivitas otomatis: Silakan lengkapi formulir secara langsung.',
+      });
       return;
     }
 
-    // 2. Cek Kecepatan Ketik Manusia (minimal 5 detik sejak buka form)
-    if (Date.now() - formOpenedAt < 5000) {
+    // 2. Cek Kecepatan Pengisian Manusia (minimal 4 detik sejak buka form)
+    if (Date.now() - formOpenedAt < 4000) {
       setFormNotice({
         type: 'error',
         text: 'Terdeteksi aktivitas otomatis: Mohon isi formulir laporan secara wajar.',
@@ -362,14 +469,12 @@ export default function App() {
       return;
     }
 
-    // 3. Cek Jawaban Verifikasi Matematika Anti-Bot
-    if (Number(mathInput.trim()) !== mathChallenge.answer) {
+    // 3. Cek Status Verifikasi Cloudflare Turnstile di Latar Belakang
+    if (turnstileStatus === 'verifying' && !turnstileToken) {
       setFormNotice({
         type: 'error',
-        text: `Jawaban verifikasi keamanan salah (${mathChallenge.a} + ${mathChallenge.b} = ${mathChallenge.answer}). Silakan coba lagi.`,
+        text: 'Sistem anti-bot Cloudflare sedang memverifikasi browser Anda. Tunggu 1-2 detik lalu kirim ulang.',
       });
-      setMathChallenge(createMathChallenge());
-      setMathInput('');
       return;
     }
 
@@ -397,7 +502,16 @@ export default function App() {
       return;
     }
 
-    // 5. Validasi Anti-Iklan, Anti-Link & Kualitas Teks
+    // 5. Validasi Kategori Lainnya
+    if (formCategory === 'Lainnya' && sanitizeText(formCustomCategory).length < 3) {
+      setFormNotice({
+        type: 'error',
+        text: 'Sebutkan jenis fasilitas umum pada kolom kategori Lainnya (minimal 3 huruf).',
+      });
+      return;
+    }
+
+    // 6. Validasi Anti-Iklan, Anti-Link & Kualitas Teks
     const contentCheck = validateReportContent(
       formTitle,
       formDescription,
@@ -411,7 +525,7 @@ export default function App() {
       return;
     }
 
-    // 6. Wajib Foto Bukti Lapangan
+    // 7. Wajib Foto Bukti Lapangan
     if (!formImage) {
       setFormNotice({
         type: 'error',
@@ -428,7 +542,7 @@ export default function App() {
       return;
     }
 
-    // 7. Rate Limiting (Jeda 30 detik & Maksimal 5 laporan / 24 jam)
+    // 8. Rate Limiting (Jeda 30 detik & Maksimal 5 laporan / 24 jam)
     const now = Date.now();
     let history = [];
     try {
@@ -457,11 +571,15 @@ export default function App() {
 
     const ticketId = `SF-2026-${String(reports.length + 1).padStart(3, '0')}`;
     const reporterFinalName = sanitizeText(formReporterName) || 'Warga Kudus';
+    const finalCategory =
+      formCategory === 'Lainnya'
+        ? `Lainnya (${sanitizeText(formCustomCategory)})`
+        : formCategory;
 
     const newReport = {
       id: ticketId,
       title: sanitizeText(formTitle),
-      category: formCategory,
+      category: finalCategory,
       priority: formPriority,
       location: sanitizeText(formLocation),
       mapUrl: `https://www.google.com/maps?q=${formCoords.lat},${formCoords.lng}`,
@@ -471,6 +589,7 @@ export default function App() {
       reporter: reporterFinalName,
       createdAt: new Date().toISOString(),
       image: formImage,
+      cfTurnstileToken: turnstileToken || undefined,
     };
 
     setReports((prev) => [newReport, ...prev]);
@@ -486,15 +605,26 @@ export default function App() {
     }
 
     setFormTitle('');
+    setFormCustomCategory('');
     setFormDescription('');
     setFormImage('');
     setImageStatusText('');
     setIsManualPriority(false);
-    setFormPriority(detectAutoPriority(formCategory, ''));
+    setFormPriority(
+      formCategory === 'Lainnya' ? 'Sedang' : detectAutoPriority(formCategory, '')
+    );
     setHumanVerified(false);
-    setMathChallenge(createMathChallenge());
-    setMathInput('');
     setFormOpenedAt(Date.now());
+
+    if (window.turnstile && turnstileWidgetIdRef.current !== null) {
+      try {
+        setTurnstileToken('');
+        setTurnstileStatus('verifying');
+        window.turnstile.reset(turnstileWidgetIdRef.current);
+      } catch {
+        // Abaikan error reset
+      }
+    }
 
     setFormNotice({
       type: 'success',
@@ -593,6 +723,8 @@ export default function App() {
 
   return (
     <div
+      onPointerDown={() => setHasHumanInteraction(true)}
+      onKeyDown={() => setHasHumanInteraction(true)}
       className={`min-h-screen overflow-x-hidden transition-colors duration-300 pb-28 ${pageBg}`}
     >
       {/* TOP HEADER SOLID-BLUR */}
@@ -999,12 +1131,12 @@ export default function App() {
               </div>
 
               {/* 2. Kategori */}
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 <label className="block text-xs font-extrabold">
                   2. Kategori Fasilitas
                 </label>
                 <div className="flex flex-wrap gap-2">
-                  {KUDUS_CATEGORIES.map((cat) => {
+                  {CATEGORY_OPTIONS.map((cat) => {
                     const active = formCategory === cat.id;
                     return (
                       <button
@@ -1022,6 +1154,18 @@ export default function App() {
                     );
                   })}
                 </div>
+
+                {formCategory === 'Lainnya' && (
+                  <input
+                    type="text"
+                    required
+                    maxLength={50}
+                    placeholder="Sebutkan jenis fasilitas umum lainnya (misal: Rambu Lalu Lintas, Jembatan Penyeberangan)..."
+                    value={formCustomCategory}
+                    onChange={(e) => setFormCustomCategory(e.target.value)}
+                    className={`w-full px-4 py-3 rounded-2xl border text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 ${subCardBg}`}
+                  />
+                )}
               </div>
 
               {/* 3. Judul */}
@@ -1056,7 +1200,9 @@ export default function App() {
                         onClick={() => {
                           setIsManualPriority(false);
                           setFormPriority(
-                            detectAutoPriority(formCategory, formTitle)
+                            formCategory === 'Lainnya'
+                              ? 'Sedang'
+                              : detectAutoPriority(formCategory, formTitle)
                           );
                         }}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-600/10 hover:bg-blue-600/20 text-blue-600 text-[11px] font-extrabold transition cursor-pointer"
@@ -1083,7 +1229,9 @@ export default function App() {
                           if (isManualPriority && isActive) {
                             setIsManualPriority(false);
                             setFormPriority(
-                              detectAutoPriority(formCategory, formTitle)
+                              formCategory === 'Lainnya'
+                                ? 'Sedang'
+                                : detectAutoPriority(formCategory, formTitle)
                             );
                           } else {
                             setFormPriority(lvl.id);
@@ -1189,11 +1337,11 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 7. Pelapor, Tantangan Anti-Bot & Konfirmasi */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* 7. Nama Pelapor & Status Anti-Bot Cloudflare Latar Belakang */}
+              <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-extrabold mb-1">
-                    Nama Pelapor
+                    7. Nama Pelapor
                   </label>
                   <input
                     type="text"
@@ -1205,18 +1353,27 @@ export default function App() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-extrabold mb-1">
-                    Verifikasi Anti-Bot: {mathChallenge.a} + {mathChallenge.b} = ?
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    placeholder="Ketik hasil penjumlahan..."
-                    value={mathInput}
-                    onChange={(e) => setMathInput(e.target.value)}
-                    className={`w-full px-4 py-2.5 rounded-2xl border text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 ${subCardBg}`}
-                  />
+                {/* Container Cloudflare Turnstile (Otomatis di Latar Belakang) */}
+                <div ref={turnstileContainerRef} className="overflow-hidden" />
+
+                <div
+                  className={`px-3.5 py-2.5 rounded-2xl border flex items-center justify-between gap-2 text-[11px] font-bold ${
+                    turnstileStatus === 'verified'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600'
+                      : subCardBg
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600" />
+                    {turnstileStatus === 'verified'
+                      ? 'Perlindungan Anti-Bot Cloudflare Aktif (Terverifikasi Otomatis)'
+                      : turnstileStatus === 'verifying'
+                      ? 'Memverifikasi keamanan perangkat di latar belakang...'
+                      : 'Perlindungan Anti-Bot Latar Belakang Aktif'}
+                  </span>
+                  <span className={`text-[10px] font-semibold ${mutedText}`}>
+                    Cloudflare
+                  </span>
                 </div>
               </div>
 
