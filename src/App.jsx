@@ -3,8 +3,6 @@ import {
   Home,
   PlusCircle,
   Search,
-  LogIn,
-  LogOut,
   MapPin,
   ExternalLink,
   Moon,
@@ -18,7 +16,6 @@ import {
   ShieldAlert,
   Lock,
   Send,
-  Download,
   X,
   Sparkles,
   Crosshair,
@@ -40,7 +37,6 @@ import {
 } from './data/adminMockData';
 
 const STORAGE_REPORTS_KEY = 'sigapfasum_warga_reports_v3';
-const STORAGE_USER_KEY = 'sigapfasum_warga_user_v3';
 const STORAGE_SUBMISSION_LOG_KEY = 'sigapfasum_submission_log_v1';
 const STORAGE_MY_TICKETS_KEY = 'sigapfasum_my_tickets_v1';
 
@@ -113,15 +109,6 @@ export default function App() {
     }
   });
 
-  const [citizenUser, setCitizenUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_USER_KEY);
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_REPORTS_KEY, JSON.stringify(reports));
@@ -137,18 +124,6 @@ export default function App() {
       // Abaikan error storage
     }
   }, [myTicketIds]);
-
-  useEffect(() => {
-    try {
-      if (citizenUser) {
-        localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(citizenUser));
-      } else {
-        localStorage.removeItem(STORAGE_USER_KEY);
-      }
-    } catch {
-      // Abaikan error storage
-    }
-  }, [citizenUser]);
 
   const [menu, setMenu] = useState('beranda');
   const [darkMode, setDarkMode] = useState(false);
@@ -180,19 +155,10 @@ export default function App() {
   const [formOpenedAt, setFormOpenedAt] = useState(() => Date.now());
   const [formNotice, setFormNotice] = useState(null);
 
-  // Modal Detail & Modal Login Google
+  // Modal Detail Laporan
   const [detailReport, setDetailReport] = useState(null);
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [googleNameInput, setGoogleNameInput] = useState('');
-  const [googleEmailInput, setGoogleEmailInput] = useState('');
 
   const photoInputRef = useRef(null);
-
-  useEffect(() => {
-    if (citizenUser?.name && !formReporterName) {
-      setFormReporterName(citizenUser.name);
-    }
-  }, [citizenUser, formReporterName]);
 
   const openReportForm = () => {
     setFormOpenedAt(Date.now());
@@ -490,9 +456,7 @@ export default function App() {
     }
 
     const ticketId = `SF-2026-${String(reports.length + 1).padStart(3, '0')}`;
-    const reporterFinalName = sanitizeText(
-      citizenUser?.name || formReporterName || 'Warga Kudus'
-    );
+    const reporterFinalName = sanitizeText(formReporterName) || 'Warga Kudus';
 
     const newReport = {
       id: ticketId,
@@ -504,8 +468,7 @@ export default function App() {
       description: sanitizeText(formDescription),
       status: 'Menunggu Verifikasi',
       assignedOfficers: [],
-      reporter: reporterFinalName || 'Warga Kudus',
-      reporterEmail: citizenUser?.email || '',
+      reporter: reporterFinalName,
       createdAt: new Date().toISOString(),
       image: formImage,
     };
@@ -539,37 +502,7 @@ export default function App() {
     setDetailReport(newReport);
   };
 
-  const handleGoogleLoginSubmit = (e) => {
-    e.preventDefault();
-    const name = sanitizeText(googleNameInput) || 'Ahmad Maulana';
-    const email =
-      sanitizeText(googleEmailInput) ||
-      `${name.toLowerCase().replace(/\s+/g, '.')}@gmail.com`;
-    setCitizenUser({ name, email, provider: 'Google' });
-    setFormReporterName(name);
-    setIsLoginModalOpen(false);
-  };
-
-  const handleDownloadTicketJson = (report) => {
-    const blob = new Blob([JSON.stringify(report, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `tiket-${report.id.toLowerCase()}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const isOwnReport = (r) => {
-    if (myTicketIds.includes(r.id)) return true;
-    if (citizenUser) {
-      if (r.reporterEmail && r.reporterEmail === citizenUser.email) return true;
-      if (r.reporter.toLowerCase() === citizenUser.name.toLowerCase()) return true;
-    }
-    return false;
-  };
+  const isOwnReport = (r) => myTicketIds.includes(r.id);
 
   const baseFilteredReports = reports.filter((r) => {
     const query = search.trim().toLowerCase();
@@ -700,50 +633,6 @@ export default function App() {
             >
               {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
-
-            {citizenUser ? (
-              <div
-                className={`flex items-center gap-2 pl-2 pr-2.5 py-1 rounded-full border ${
-                  darkMode
-                    ? 'bg-[#141b29] border-slate-800'
-                    : 'bg-white border-slate-200/80 shadow-xs'
-                }`}
-              >
-                <button
-                  onClick={() => {
-                    setMenu('lacak');
-                    setOnlyMyReports(true);
-                  }}
-                  title="Lihat Laporan Saya"
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <div className="w-7 h-7 rounded-full bento-blue-3d text-white text-xs font-extrabold flex items-center justify-center">
-                    {citizenUser.name.charAt(0).toUpperCase()}
-                  </div>
-                  <span className="hidden sm:inline text-xs font-extrabold">
-                    {citizenUser.name.split(' ')[0]}
-                  </span>
-                </button>
-                <button
-                  onClick={() => {
-                    setCitizenUser(null);
-                    setOnlyMyReports(false);
-                  }}
-                  title="Keluar Akun Google"
-                  className="p-1 rounded-full text-slate-400 hover:text-red-500 transition cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setIsLoginModalOpen(true)}
-                className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-full bento-blue-3d text-white text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-              >
-                <LogIn className="w-3.5 h-3.5 shrink-0" />
-                <span>Masuk Google</span>
-              </button>
-            )}
           </div>
         </div>
       </header>
@@ -763,9 +652,7 @@ export default function App() {
                     Kabupaten Kudus
                   </span>
                   <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-snug">
-                    {citizenUser
-                      ? `Halo, ${citizenUser.name}! Ada Fasilitas Rusak di Sekitar Anda?`
-                      : 'Laporkan Kerusakan Fasilitas Umum dengan Cepat & Terverifikasi'}
+                    Laporkan Kerusakan Fasilitas Umum dengan Cepat & Terverifikasi
                   </h1>
                   <p className="text-xs sm:text-sm text-blue-100 max-w-xl leading-relaxed">
                     Dilengkapi verifikasi GPS khusus area Kabupaten Kudus, wajib foto
@@ -1282,9 +1169,8 @@ export default function App() {
                   <input
                     type="text"
                     maxLength={60}
-                    placeholder="Nama Anda (atau masuk Google)"
-                    value={citizenUser ? citizenUser.name : formReporterName}
-                    disabled={Boolean(citizenUser)}
+                    placeholder="Opsional (kosongkan untuk Warga Kudus)"
+                    value={formReporterName}
                     onChange={(e) => setFormReporterName(e.target.value)}
                     className={`w-full px-4 py-2.5 rounded-2xl border text-xs ${subCardBg}`}
                   />
@@ -1587,79 +1473,12 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  onClick={() => handleDownloadTicketJson(detailReport)}
-                  className={`py-2.5 rounded-full border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${subCardBg}`}
-                >
-                  <Download className="w-3.5 h-3.5" /> Unduh Tiket
-                </button>
-                <button
-                  onClick={() => setDetailReport(null)}
-                  className="py-2.5 rounded-full bento-blue-3d text-white text-xs font-bold cursor-pointer"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL LOGIN GOOGLE */}
-        {isLoginModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div
-              className={`rounded-[28px] border max-w-md w-full p-6 space-y-4 shadow-2xl ${cardBg}`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bento-blue-3d text-white font-extrabold text-xs flex items-center justify-center">
-                    G
-                  </div>
-                  <h3 className="text-base font-extrabold">Masuk Akun Warga</h3>
-                </div>
-                <button
-                  onClick={() => setIsLoginModalOpen(false)}
-                  className={`p-1.5 rounded-full hover:bg-slate-500/10 cursor-pointer ${mutedText}`}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleGoogleLoginSubmit} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-bold mb-1">
-                    Nama Lengkap
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: Ahmad Maulana"
-                    value={googleNameInput}
-                    onChange={(e) => setGoogleNameInput(e.target.value)}
-                    className={`w-full px-4 py-2.5 rounded-2xl border text-xs ${subCardBg}`}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold mb-1">
-                    Alamat Gmail
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="nama@gmail.com"
-                    value={googleEmailInput}
-                    onChange={(e) => setGoogleEmailInput(e.target.value)}
-                    className={`w-full px-4 py-2.5 rounded-2xl border text-xs ${subCardBg}`}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="w-full py-3 rounded-full bento-blue-3d text-white text-xs font-extrabold cursor-pointer"
-                >
-                  Lanjutkan dengan Google
-                </button>
-              </form>
+              <button
+                onClick={() => setDetailReport(null)}
+                className="w-full py-2.5 rounded-full bento-blue-3d text-white text-xs font-bold cursor-pointer"
+              >
+                Tutup
+              </button>
             </div>
           </div>
         )}
