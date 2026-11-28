@@ -490,6 +490,7 @@ export default function App() {
     setFormImage('');
     setImageStatusText('');
     setIsManualPriority(false);
+    setFormPriority(detectAutoPriority(formCategory, ''));
     setHumanVerified(false);
     setMathChallenge(createMathChallenge());
     setMathInput('');
@@ -1041,14 +1042,35 @@ export default function App() {
 
               {/* 4. Tingkat Prioritas */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="block text-xs font-extrabold">
                     4. Tingkat Prioritas
                   </label>
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600">
-                    <Sparkles className="w-3 h-3" />
-                    {isManualPriority ? 'Dipilih manual' : 'Otomatis'}
-                  </span>
+                  {isManualPriority ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-amber-600">
+                        Dipilih manual
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsManualPriority(false);
+                          setFormPriority(
+                            detectAutoPriority(formCategory, formTitle)
+                          );
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-600/10 hover:bg-blue-600/20 text-blue-600 text-[11px] font-extrabold transition cursor-pointer"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        Kembali ke Otomatis
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600">
+                      <Sparkles className="w-3 h-3" />
+                      Otomatis
+                    </span>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {PRIORITY_LEVELS.map((lvl) => {
@@ -1058,8 +1080,15 @@ export default function App() {
                         key={lvl.id}
                         type="button"
                         onClick={() => {
-                          setFormPriority(lvl.id);
-                          setIsManualPriority(true);
+                          if (isManualPriority && isActive) {
+                            setIsManualPriority(false);
+                            setFormPriority(
+                              detectAutoPriority(formCategory, formTitle)
+                            );
+                          } else {
+                            setFormPriority(lvl.id);
+                            setIsManualPriority(true);
+                          }
                         }}
                         className={`p-2.5 sm:p-3 rounded-2xl border text-left transition cursor-pointer ${
                           isActive
